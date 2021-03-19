@@ -11,14 +11,14 @@
 -->
 
 
-# Week 6
+# Week 7
 
 
 ## What I've Learned 🙂
 [ Part 3 저수준 API ]
 
-- CHAPTER 13 RDD 고급개념
-  - [블로그](https://minsw.github.io/2021/03/15/Spark-The-Definitive-Guide-13%EC%9E%A5/)
+- CHAPTER 14 분산형 공유 변수
+  - [블로그](https://minsw.github.io/2021/03/20/Spark-The-Definitive-Guide-14%EC%9E%A5/)
 
 
 ## Online (WhaleON)
