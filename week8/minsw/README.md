@@ -62,7 +62,7 @@
 ## Online (WhaleON)
 > 2021.04.01
 
-<img width="500" alt="week8" src="https://user-images.githubusercontent.com/26691216/115326349-1bfc9000-a1c8-11eb-96e3-bdb768e446ad.png">
+<img width="500" alt="week8" src="https://user-images.githubusercontent.com/26691216/115327965-d1304780-a1ca-11eb-9d6a-4e9f88a233cb.png">
 
 - minsw
   - "태스크의 단일 스테이지로 만듭니다." => ?
@@ -109,3 +109,5 @@
 - "캐글데이터로 고정데이터로 재밌는, 유의미한 값을 뽑는것까지만해도 유의미하지 않나" 라는 의견
 - 어쨌든 어플리케이션을 잘 만들어야 거기다가 얹어가는것 아니겠는가
 - myeongki) 라이프사이클이 제일재밌었다 ㅋㅋㅋㅋㅋ
+- 결론
+  - 한 주 쉬고, 각자 어떤 (정적) 데이터로 해볼지 찾아와서 논의해보기

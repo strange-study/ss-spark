@@ -17,9 +17,6 @@
 ## What I've Learned 🙂
 [ Part 2 구조적 API: DataFrame, SQL, Part 2Dataset ]
 
-CHAPTER 10 스파크 SQL
-CHAPTER 11 Dataset
-
 - CHAPTER 10 스파크 SQL
   - [블로그](https://minsw.github.io/2021/02/23/Spark-The-Definitive-Guide-10%EC%9E%A5/)
 - CHAPTER 11 Dataset
