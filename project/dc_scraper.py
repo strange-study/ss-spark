@@ -100,10 +100,10 @@ def getPages(board_id, o):
 def main(gall_names):
     start_time = datetime.now()
     today = start_time.strftime("%Y%m%d")
-    for gall_name in gall_names:
-        if not os.path.exists(f"{OUTPUT_DIR}/{today}"):
-            os.makedirs(f"{OUTPUT_DIR}/{today}")
+    if not os.path.exists(f"{OUTPUT_DIR}/{today}"):
+        os.makedirs(f"{OUTPUT_DIR}/{today}")
 
+    for gall_name in gall_names:
         output_path = f"{OUTPUT_DIR}/{today}/{gall_name}.csv"  # csv
         o = open(output_path, "w")
         print(f"Save to '{output_path}'")
