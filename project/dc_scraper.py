@@ -6,8 +6,17 @@ import requests
 from bs4 import BeautifulSoup
 from pytz import timezone
 
+START_DT = datetime.combine(datetime.now(timezone('Asia/Seoul')).date() - timedelta(days=1), time(6))
+
+URL = 'https://gall.dcinside.com/board/lists/'
+HEADERS = {'User-Agent': 'test'}
+MAX_INT = sys.maxsize
+OUTPUT_DIR = "output"
+INPUT_DIR = "output/board_ids.csv"
 
 class Post:
+    columns = ["c_id", "title", "view", "recommend", "comment_num", "date"]
+
     def __init__(self, num=None, title=None, view=None, recommend=None, comment_num=0, date=None):
         self.c_id = num
         self.title = title
@@ -16,36 +25,26 @@ class Post:
         self.comment_num = comment_num
         self.date = date
 
-    def getHeader(self):
-        return ",".join(["c_id", "title", "view", "recommend", "comment_num", "date"])
+    def get_header(self):
+        return ",".join(Post.columns)
 
-    def toCsvRow(self):
+    def to_csv_row(self):
         return ",".join(map(str, [self.c_id, self.title, self.view, self.recommend, self.comment_num, self.date]))
 
 
-START_DT = datetime.combine(datetime.now(timezone('Asia/Seoul')).date() - timedelta(days=1), time(6))
-
-# mobile URL : https://m.dcinside.com/board/${id}
-URL = 'https://gall.dcinside.com/board/lists/'
-HEADERS = {'User-Agent': 'test'}
-MAX_INT = sys.maxsize
-OUTPUT_DIR = "output"
-INPUT_DIR = "output/board_ids.csv"
-
-
 # Get contents from Html (by css selector)
-def getContentsFromHtml(response):
+def get_contents_from_html(response):
     html = response.text
     soup = BeautifulSoup(html, 'html.parser')
     contents = soup.find('tbody').find_all('tr')
     return contents
 
 
-# 
-def getPost(content, num):
+# Get post
+def get_post(content, num):
     date_tag = content.find('td', class_='gall_date')
     date = datetime.strptime(date_tag.attrs['title'], '%Y-%m-%d %H:%M:%S')
-    # not tdday
+    # not today
     if date < START_DT:
         return None
 
@@ -63,7 +62,7 @@ def getPost(content, num):
     return Post(num, title, view, recommend, comment_num, date)
 
 
-def getPages(board_id, o):
+def get_pages(board_id, output):
     is_today, prev_id = True, MAX_INT
     params = {'id': board_id, 'page': 0}
 
@@ -76,21 +75,21 @@ def getPages(board_id, o):
             print("[ERROR] RESPONSE CODE : {}".format(response.status_code))
             return
 
-        contents = getContentsFromHtml(response)
-        for i in contents:
-            num = i.find('td', class_='gall_num').text
+        contents = get_contents_from_html(response)
+        for content in contents:
+            num = content.find('td', class_='gall_num').text
             if not num.isdigit() or int(num) >= prev_id:
                 continue
 
             c_id = int(num)
-            post = getPost(i, c_id)
+            post = get_post(content, c_id)
 
             if not post:
                 is_today = False
                 break
 
             # File Write
-            o.write(post.toCsvRow() + "\n")
+            output.write(post.to_csv_row() + "\n")
             prev_id = c_id
 
     print("--------------------------")
@@ -109,24 +108,24 @@ def main(gall_names):
         print(f"Save to '{output_path}'")
 
         # Write Data Header
-        o.write(Post().getHeader() + "\n")
+        o.write(Post().get_header() + "\n")
         # get Today's posts
-        getPages(gall_name, o)
+        get_pages(gall_name, o)
         o.close()
     print("[END] TOTAL TIME : ", datetime.now() - start_time)
 
 
-def printWarningEmptyBoardIdsFile():
-    print(
-        "[ERROR] 'board_ids.csv' file is required.\n\nusage: 'python3 dc_board_id_scraper.py' -> 'python3 dc_scraper.py'")
+def print_warning_empty_borad_ids_file():
+    print("[ERROR] 'board_ids.csv' file is required.\n\nusage: 'python3 dc_board_id_scraper.py' -> 'python3 dc_scraper.py'")
 
 
 if __name__ == "__main__":
     if not os.path.exists(f"{INPUT_DIR}"):
-        printWarningEmptyBoardIdsFile()
+        print_warning_empty_borad_ids_file()
     else:
         inputList = []
         i = open(INPUT_DIR, "r")
         for itr in i:
             inputList.append(itr.replace('\n', ''))
         main(inputList)
+        i.close()
