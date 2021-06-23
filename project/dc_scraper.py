@@ -48,7 +48,7 @@ def get_post(content, num):
     if date < START_DT:
         return None
 
-    title = content.find('a').text
+    title = content.find('a').text.replace(",", " ") # replace ',' to blank
     view = int(content.find('td', class_='gall_count').text)
     recommend = int(content.find('td', class_='gall_recommend').text)
 
