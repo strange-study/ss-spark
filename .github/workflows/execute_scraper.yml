@@ -1,5 +1,7 @@
 name: execute_scraper
-on: [push]
+on:
+  schedule:
+    - cron: "*/10 * * * *"
 
 jobs:
   build:
