@@ -1,0 +1,13 @@
+name: execute_scraper
+on: [push]
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - name: Execute the scraper
+        run: |
+          python /home/ubuntu/src/hello.py
+      - name: Check Result
+        run: |
+          cat /home/ubuntu/src/output.txt
