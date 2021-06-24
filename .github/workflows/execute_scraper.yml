@@ -1,7 +1,7 @@
 name: execute_scraper
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "40 * * * *"
 
 jobs:
   build:
@@ -12,4 +12,4 @@ jobs:
           python /home/ubuntu/src/hello.py
       - name: Check Result
         run: |
-          cat /home/ubuntu/src/output.txt
+          cat output.txt
