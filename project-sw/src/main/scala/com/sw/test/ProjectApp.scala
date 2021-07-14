@@ -27,7 +27,7 @@ object ProjectApp {
 
   val INPUT_PATH: String = "/home/data/input"
   val OUTPUT_PATH: String = "/home/data/output"
-  val NUM_TERMS = 20
+  val NUM_TERMS = 1000
 
   val tokenizer: RegexTokenizer = new RegexTokenizer().setInputCol("title").setOutputCol("tokens").setPattern("[ ]")
   // FIXME : LIGHT vs FULL
@@ -47,7 +47,7 @@ object ProjectApp {
   def getSchema() : StructType = {
     return StructType(Seq(
       StructField("gall_id", StringType, nullable = false),
-      StructField("best_words", ArrayType(StringType), nullable = false)
+      StructField("terms", ArrayType(StringType), nullable = false)
     ))
   }
 
@@ -64,6 +64,7 @@ object ProjectApp {
     for (file <- fileList) {
       try {
         val gallId = file.getPath.split("/").last.split(".csv")(0)
+
         val df = spark.read
           .options(Map("header" -> "true", "inferSchema" -> "true"))
           .csv(file.getPath)
@@ -72,45 +73,15 @@ object ProjectApp {
         val outputDF = tokenizer.transform(df)
           .withColumn("nouns", getNounsUdf(col("title")))
           .select(
-            col("title"),
             when(size(col("nouns")) > 0, col("nouns")).otherwise(col("tokens")).as("terms")
           )
-          .filter(size(col("terms")) > 0)
-
-        // 2. TF
-        val model = new CountVectorizer()
-          .setInputCol("terms")
-          .setOutputCol("termsFreqs")
-          .setVocabSize(NUM_TERMS)
-          .fit(outputDF)
-        val termIds: Array[String] = model.vocabulary
-
-        val docTermsFreqs = model.transform(outputDF)
-        docTermsFreqs.cache()
-
-        // 3. IDF
-        val idfModel = new IDF().setInputCol("termsFreqs").setOutputCol("tfidfVec").fit(docTermsFreqs)
-        val docTermMatrix = idfModel.transform(docTermsFreqs)
-
-        val docRdd = docTermMatrix.select("tfidfVec")
-
-        val words = docRdd.flatMap { ele =>
-          var idx = -1
-          val ids = ele.getAs[SparseVector](0).toDense.toArray.map(value => {
-            idx = idx + 1
-            (idx, value)
-          })
-          ids.filter(v => { v._2 == 0.0 }).map { v => termIds(v._1) }
-        }
-
-        val bestWords = words.distinct().select(
-          lit(gallId).as("gall_id"),
-          collect_list("value").as("best_words")
-        )
-
-        // Append Result
-        res = res.union(bestWords)
-        docTermsFreqs.unpersist()
+          .select(explode(col("terms")))
+          .agg(collect_list(col("col")).as("terms"))
+          .select(
+            lit(gallId).as("gall_id"),
+            col("terms")
+          )
+        res = res.union(outputDF)
       }
       catch {
         case ex : Exception => println(ex) // Skip Error
@@ -118,7 +89,41 @@ object ProjectApp {
 
     }
 
-    res.withColumn("res", concat(lit("["), concat_ws(",", col("best_words")), lit("]")))
+
+    // 2. TF
+    val model = new CountVectorizer()
+      .setInputCol("terms")
+      .setOutputCol("termsFreqs")
+      .setVocabSize(NUM_TERMS)
+      .fit(res)
+    val termIds: Array[String] = model.vocabulary
+
+    val docTermsFreqs = model.transform(res)
+    docTermsFreqs.cache()
+
+    // 3. IDF
+    val idfModel = new IDF().setInputCol("termsFreqs").setOutputCol("tfidfVec").fit(docTermsFreqs)
+    val docTermMatrix = idfModel.transform(docTermsFreqs)
+
+    def getBestWordsUdf: UserDefinedFunction = udf[Seq[String], SparseVector] { ele =>
+      var idx = -1
+      val ids = ele.toDense.toArray.map(value => {
+        idx = idx + 1
+        (idx, value)
+      })
+      ids.filter(v => { v._2 == 0.0 }).map { v => termIds(v._1) }
+    }
+
+    val bestWords = docTermMatrix
+      .withColumn("best_words", getBestWordsUdf(col("tfidfVec")))
+      .select(
+        col("gall_id"),
+        col("best_words")
+      )
+
+    docTermsFreqs.unpersist()
+
+    bestWords.withColumn("res", concat(lit("["), concat_ws(",", col("best_words")), lit("]")))
       .select(col("gall_id"), col("res"))
       .coalesce(1)
       .write
