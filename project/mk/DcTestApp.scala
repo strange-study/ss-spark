@@ -28,12 +28,12 @@ object DcTestApp {
 
   val spark: SparkSession = SparkSession.builder.appName("sparkTest")
     .config("spark.master", "local")
-    .config("spark.driver.bindAddress", "192.168.1.4")
+    .config("spark.driver.bindAddress", "192.168.0.33")
     .getOrCreate()
 
   val boardIdsData: DataFrame = getDataFrame(INPUT_DATA_PATH + BOARD_IDS)
 
-  val NUM_TILE_WORDS = 26214
+  val NUM_TILE_WORDS = 66214
   val NUM_K = 1000
 
   def main(args: Array[String]) {
@@ -82,14 +82,14 @@ object DcTestApp {
 
     val topWords = topWordsInTopConcepts(
       svd,
-      4,
       10,
+      5,
       titleWordsIds
     )
     val topGall = topGallInTopConcept(
       svd,
-      4,
       10,
+      1,
       dcGallIds
     )
     makeOutputFile(topWords, topGall)
