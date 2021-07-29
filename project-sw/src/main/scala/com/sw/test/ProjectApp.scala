@@ -1,33 +1,31 @@
 package com.sw.test
 
-import org.apache.spark.sql.{Dataset, Row, SparkSession}
-import org.apache.spark.sql.functions._
-import org.apache.spark.sql.expressions.UserDefinedFunction
-import org.apache.spark.sql.types.{ArrayType, StringType, StructField, StructType}
-import org.apache.spark.ml.feature.{CountVectorizer, IDF, RegexTokenizer}
-import org.apache.spark.ml.linalg.SparseVector
-import kr.co.shineware.nlp.komoran.constant.DEFAULT_MODEL
-import kr.co.shineware.nlp.komoran.core.Komoran
-
-import scala.collection.JavaConverters._
 import java.io.File
 
-import org.apache.spark.mllib.linalg.distributed.RowMatrix
-import org.apache.spark.mllib.linalg.{Vectors, Vector => MLLibVector}
+import kr.co.shineware.nlp.komoran.constant.DEFAULT_MODEL
+import kr.co.shineware.nlp.komoran.core.Komoran
+import org.apache.spark.ml.feature.{CountVectorizer, IDF, RegexTokenizer}
 import org.apache.spark.ml.linalg.{Vector => MLVector}
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
+import org.apache.spark.mllib.linalg.{Matrix, SingularValueDecomposition, Vectors}
+import org.apache.spark.sql.expressions.UserDefinedFunction
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types.{ArrayType, StringType, StructField, StructType}
+import org.apache.spark.sql.{Row, SparkSession}
 
+import scala.collection.JavaConverters._
+import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import scala.util.{Success, Try}
 
 
 /**
- * @author 민세원 (min.saewon@navercorp.com)
+ * @author 민세원 (minSW)
  */
 
 object ProjectApp {
 
   val INPUT_PATH: String = "/home/data/input"
   val OUTPUT_PATH: String = "/home/data/output"
-  val NUM_TERMS = 1000
 
   val tokenizer: RegexTokenizer = new RegexTokenizer().setInputCol("title").setOutputCol("tokens").setPattern("[ ]")
   // FIXME : LIGHT vs FULL
@@ -50,14 +48,14 @@ object ProjectApp {
       StructField("terms", ArrayType(StringType), nullable = false)
     ))
   }
-
+  
   def main(args: Array[String]): Unit = {
     val spark = SparkSession.builder().appName("Project Application").getOrCreate()
 
-    import spark.implicits._
-
     var res = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], getSchema())
 
+    val NUM_TERMS = 3000
+    val K = 1000 // K < N
     val outputDir = new File(INPUT_PATH)
     val fileList: List[File] = if (outputDir.exists && outputDir.isDirectory) outputDir.listFiles.filter(_.isFile).toList else List[File]()
 
@@ -88,58 +86,80 @@ object ProjectApp {
       }
 
     }
-
-
+    
     // 2. TF
-    val model = new CountVectorizer()
+    val vocabModel = new CountVectorizer()
       .setInputCol("terms")
       .setOutputCol("termsFreqs")
       .setVocabSize(NUM_TERMS)
       .fit(res)
-    val termIds: Array[String] = model.vocabulary
-
-    val docTermsFreqs = model.transform(res)
+    val docTermsFreqs = vocabModel.transform(res)
     docTermsFreqs.cache()
 
+    val termIds: Array[String] = vocabModel.vocabulary
+    
     // 3. IDF
     val idfModel = new IDF().setInputCol("termsFreqs").setOutputCol("tfidfVec").fit(docTermsFreqs)
     val docTermMatrix = idfModel.transform(docTermsFreqs)
 
-    def getBestWordsUdf: UserDefinedFunction = udf[Seq[String], SparseVector] { ele =>
-      var idx = -1
-      val ids = ele.toDense.toArray.map(value => {
-        idx = idx + 1
-        (idx, value)
-      })
-      ids.filter(v => { v._2 == 0.0 }).map { v => termIds(v._1) }
+    val docIds: Map[Long, String] = docTermsFreqs.rdd.map(_.getString(0)).zipWithUniqueId().map(_.swap).collect().toMap
+    
+    // 4. SVD (M=USVt)
+    // 'spark.ml' Vector => 'spark.mllib' Vector (for SVD)
+    val vecRdd = docTermMatrix.select("tfidfVec").rdd.map{ row => Vectors.fromML(row.getAs[MLVector]("tfidfVec"))} // : RDD[org.apache.spark.mllib.linalg.Vector]
+    vecRdd.cache()
+    val mat = new RowMatrix(vecRdd)
+    val svd = mat.computeSVD(K, computeU=true)
+
+    // 의미 & 단어 관련성 (S*Vt) => V : local
+    def topTermsInTopConcepts(svd: SingularValueDecomposition[RowMatrix, Matrix], numConcepts: Int, numTerms: Int, termIds: Array[String]) : Seq[Seq[(String, Double)]] = {
+      val v = svd.V
+      val topTerms = new ArrayBuffer[Seq[(String, Double)]]
+      val arr = v.toArray
+
+      for (i <- 0 until numConcepts) {
+        val offs = i * v.numRows
+        val termWeights = arr.slice(offs, offs + v.numRows).zipWithIndex
+        val sorted = termWeights.sortBy(-_._1) // score desc sorting => (score, id)
+        topTerms += sorted.take(numTerms).map {
+          case (score, id) => (termIds(id), score) // => (term, score)
+        }
+      }
+      topTerms
     }
 
-    val bestWords = docTermMatrix
-      .withColumn("best_words", getBestWordsUdf(col("tfidfVec")))
-      .select(
-        col("gall_id"),
-        col("best_words")
-      )
+    // 문서 & 의미 관련성 (U*S) => U : distributed
+    def topDocsInTopConcepts(svd: SingularValueDecomposition[RowMatrix, Matrix], numConcepts: Int, numDocs: Int, docIds: Map[Long, String]) : Seq[Seq[(String, Double)]] = {
+      val u = svd.U
+      val topDocs = new ArrayBuffer[Seq[(String, Double)]]()
+      for (i <- 0 until numConcepts) {
+        val docWeights = u.rows.map(_.toArray(i)).zipWithUniqueId()
+        topDocs += docWeights.top(numDocs).map { // top 1 (=> desc sort) => (score, uniqueKey)
+          case (score, id) => (docIds(id), score) // (doc, score)
+        }
+      }
+      topDocs
+    }
 
-    docTermsFreqs.unpersist()
+    val numConcepts = res.count().toInt
+    val topConceptTerms = topTermsInTopConcepts(svd, numConcepts, 20, termIds)
+    val topConceptDocs = topDocsInTopConcepts(svd, numConcepts, 1, docIds)
 
-    bestWords.withColumn("res", concat(lit("["), concat_ws(",", col("best_words")), lit("]")))
-      .select(col("gall_id"), col("res"))
+    var rowList = ListBuffer[Row]()
+    for ((terms, docs) <- topConceptTerms.zip(topConceptDocs)) {
+      rowList += Row(docs.map(_._1).mkString(""), terms.map(_._1))
+    }
+    
+    val output = spark.createDataFrame(spark.sparkContext.parallelize(rowList.toList), getSchema())
+    
+    output.withColumn("best_words", concat(lit("["), concat_ws(",", col("terms")), lit("]")))
+      .select(col("gall_id"), col("best_words"))
       .coalesce(1)
       .write
       .mode("overwrite")
       .csv(OUTPUT_PATH)
 
+    docTermsFreqs.unpersist()
+    vecRdd.unpersist()
   }
 }
-
-
-//    // row ID - doc TITLE
-//    //val docIds = docTermsFreqs.rdd.map(_.getString(0)).zipWithUniqueId().map(_.swap).collect().toMap
-//
-//    // SVD
-//    val vecRdd = docTermMatrix.select("tfidfVec").rdd.map{ row => Vectors.fromML(row.getAs[MLVector]("tfidfVec"))}
-//    vecRdd.cache()
-//    val mat = new RowMatrix(vecRdd)
-//    val k = 1000
-//    val svd = mat.computeSVD(k, computeU=true)
