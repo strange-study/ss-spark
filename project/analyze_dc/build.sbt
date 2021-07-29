@@ -2,9 +2,9 @@ name := "analyze_dc"
 
 version := "0.1"
 
-scalaVersion := "2.12.0"
+scalaVersion := "2.11.12"
 
-val sparkVersion = "2.4.8"
+val sparkVersion = "2.4.4"
 
 resolvers += "jitpack" at "https://jitpack.io"
 
