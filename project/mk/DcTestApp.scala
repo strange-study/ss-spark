@@ -1,5 +1,5 @@
 
-import org.apache.spark.ml.feature.{CountVectorizer, IDF, Tokenizer}
+import org.apache.spark.ml.feature.{CountVectorizer, IDF, RegexTokenizer, Tokenizer}
 import org.apache.spark.ml.linalg.{Vector => MLVector}
 import org.apache.spark.mllib.linalg.distributed.RowMatrix
 import org.apache.spark.mllib.linalg.{Matrix, SingularValueDecomposition, Vectors}
@@ -24,21 +24,28 @@ object DcTestApp {
   val TF_IDF = "TF-IDF"
   val BEST_WORDS = "BEST_WORDS"
 
-  val OUTPUT_FILE_NAME = "result"
+  val TARGET_BOARD_ID = "bitcoins"
 
   val spark: SparkSession = SparkSession.builder.appName("sparkTest")
     .config("spark.master", "local")
-    .config("spark.driver.bindAddress", "192.168.0.33")
+    .config("spark.driver.bindAddress", "192.168.0.16")
     .getOrCreate()
 
   val boardIdsData: DataFrame = getDataFrame(INPUT_DATA_PATH + BOARD_IDS)
 
-  val NUM_TILE_WORDS = 66214
-  val NUM_K = 1000
+  val NUM_TILE_WORDS = 96214
+
+  val NUM_K = 800
+
+  val NUM_VIEW = 200
+
+  val OUTPUT_FILE_NAME = "result-" +s"view-$NUM_VIEW"+s"k-$NUM_K"
+
+  val TOKEN_PATTERN = "[ ]"
 
   def main(args: Array[String]) {
     executeSemanticAnalysis()
-    getDataFrame(OUTPUT_DATA_PATH + "result").show()
+    getDataFrame(OUTPUT_DATA_PATH + OUTPUT_FILE_NAME).show()
   }
 
 
@@ -46,11 +53,12 @@ object DcTestApp {
 
     val inputDf = getDcGallInputDf()
 
-    val tokenizer = new Tokenizer()
+    val tokenizer = new RegexTokenizer()
       .setInputCol(REDUCE_TITLE)
       .setOutputCol(TITLE_TOKEN_WORDS)
-    val titleTokenWords = tokenizer.transform(inputDf)
+      .setPattern(TOKEN_PATTERN)
 
+    val titleTokenWords = tokenizer.transform(inputDf)
     val tf = new CountVectorizer()
       .setInputCol(TITLE_TOKEN_WORDS)
       .setOutputCol(TF)
@@ -83,13 +91,13 @@ object DcTestApp {
     val topWords = topWordsInTopConcepts(
       svd,
       10,
-      5,
+      15,
       titleWordsIds
     )
     val topGall = topGallInTopConcept(
       svd,
       10,
-      1,
+      2,
       dcGallIds
     )
     makeOutputFile(topWords, topGall)
@@ -99,18 +107,24 @@ object DcTestApp {
     val inputSchema = new StructType()
       .add(GALL_ID, StringType)
       .add(REDUCE_TITLE, StringType)
-    val boardIds = boardIdsData.collect()
     val rows = new util.ArrayList[Row]()
-    boardIds.foreach { row =>
-      val boardId = row.mkString
-      val contentsRow = getDataFrame(INPUT_DATA_PATH + TARGET_DATE + boardId + FILE_TYPE)
+    val dateRow = getDataFrame(INPUT_DATA_PATH + TARGET_BOARD_ID + FILE_TYPE)
+      .select("date")
+      .collect()
+      .map(row => row.mkString.substring(0, 10))
+      .distinct
+    dateRow.foreach(date => {
+      val df = getDataFrame(INPUT_DATA_PATH + TARGET_BOARD_ID + FILE_TYPE)
+      val contentsRow = df
         .select("title")
+        .where(df.col("date").contains(date) and (df.col("view") > NUM_VIEW))
         .collect()
         .map(row => row.mkString)
         .mkString(" ")
 
-      rows.add(Row(boardId, contentsRow))
+      rows.add(Row(TARGET_BOARD_ID + " " + date, contentsRow))
     }
+    )
     spark.createDataFrame(rows, inputSchema)
   }
 
@@ -157,7 +171,7 @@ object DcTestApp {
       .add(BEST_WORDS, StringType)
       .add(GALL_ID, StringType)
     for ((terms, docs) <- topWords.zip(topGall)) {
-      outRows.add(Row(terms.map(_._1).mkString(", "), docs.map(_._1).mkString(", ")))
+      outRows.add(Row(terms.map(_._1).mkString(", "), docs.mkString(", ")))
     }
     val outDf = spark.createDataFrame(outRows, outSchema)
 
