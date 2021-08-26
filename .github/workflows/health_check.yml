@@ -1,13 +1,13 @@
-name: execute_scraper
+name: health_check
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "10 * * * *"
 
 jobs:
   build:
     runs-on: self-hosted
     steps:
-      - name: Execute the scraper
+      - name: health_check
         run: |
           python /home/ubuntu/src/hello.py
       - name: Check Result
