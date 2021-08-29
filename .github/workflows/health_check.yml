@@ -9,7 +9,7 @@ jobs:
     steps:
       - name: health_check
         run: |
-          python /home/ubuntu/src/hello.py
+          python3 /home/ubuntu/src/hello.py
       - name: Check Result
         run: |
           cat /home/ubuntu/src/output.txt
