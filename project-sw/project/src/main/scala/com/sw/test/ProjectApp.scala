@@ -7,15 +7,17 @@ import kr.co.shineware.nlp.komoran.core.Komoran
 import org.apache.spark.ml.feature.{CountVectorizer, IDF, RegexTokenizer}
 import org.apache.spark.ml.linalg.{Vector => MLVector}
 import org.apache.spark.mllib.linalg.distributed.RowMatrix
-import org.apache.spark.mllib.linalg.{Matrix, SingularValueDecomposition, Vectors}
+import org.apache.spark.mllib.linalg.{Matrices, Matrix, SingularValueDecomposition, Vectors, Vector => MLLibVector}
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{ArrayType, StringType, StructField, StructType}
 import org.apache.spark.sql.{Row, SparkSession}
 
 import scala.collection.JavaConverters._
+import scala.collection.Map
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import scala.util.{Success, Try}
+
 
 
 /**
@@ -42,17 +44,32 @@ object ProjectApp {
     }
   }
 
-  def getSchema() : StructType = {
+  def getInputSchema() : StructType = {
     return StructType(Seq(
       StructField("gall_id", StringType, nullable = false),
       StructField("terms", ArrayType(StringType), nullable = false)
     ))
   }
-  
+
+  def getOutputSchema() : StructType = {
+    return StructType(Seq(
+      StructField("gall_ids", ArrayType(StringType), nullable = false),
+      StructField("best_terms", ArrayType(StringType), nullable = false)
+    ))
+  }
+
+  def getOutputSchema2() : StructType = {
+    return StructType(Seq(
+      StructField("term", StringType, nullable = false),
+      StructField("best_galls", ArrayType(StringType), nullable = false)
+    ))
+  }
+
+
   def main(args: Array[String]): Unit = {
     val spark = SparkSession.builder().appName("Project Application").getOrCreate()
 
-    var res = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], getSchema())
+    var res = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], getInputSchema())
 
     val NUM_TERMS = 3000
     val K = 1000 // K < N
@@ -86,7 +103,7 @@ object ProjectApp {
       }
 
     }
-    
+
     // 2. TF
     val vocabModel = new CountVectorizer()
       .setInputCol("terms")
@@ -97,13 +114,13 @@ object ProjectApp {
     docTermsFreqs.cache()
 
     val termIds: Array[String] = vocabModel.vocabulary
-    
+
     // 3. IDF
     val idfModel = new IDF().setInputCol("termsFreqs").setOutputCol("tfidfVec").fit(docTermsFreqs)
     val docTermMatrix = idfModel.transform(docTermsFreqs)
 
     val docIds: Map[Long, String] = docTermsFreqs.rdd.map(_.getString(0)).zipWithUniqueId().map(_.swap).collect().toMap
-    
+
     // 4. SVD (M=USVt)
     // 'spark.ml' Vector => 'spark.mllib' Vector (for SVD)
     val vecRdd = docTermMatrix.select("tfidfVec").rdd.map{ row => Vectors.fromML(row.getAs[MLVector]("tfidfVec"))} // : RDD[org.apache.spark.mllib.linalg.Vector]
@@ -143,23 +160,79 @@ object ProjectApp {
 
     val numConcepts = res.count().toInt
     val topConceptTerms = topTermsInTopConcepts(svd, numConcepts, 20, termIds)
-    val topConceptDocs = topDocsInTopConcepts(svd, numConcepts, 1, docIds)
+    val topConceptDocs = topDocsInTopConcepts(svd, numConcepts, 5, docIds)
 
     var rowList = ListBuffer[Row]()
+    val termsList = ListBuffer[String]()
+
     for ((terms, docs) <- topConceptTerms.zip(topConceptDocs)) {
-      rowList += Row(docs.map(_._1).mkString(""), terms.map(_._1))
+      val bestTerms = terms.filter(_._2 > 0.001).map(t => f"${t._1}(${t._2 * 100}%.2f)")
+      val bestDocs = docs.filter(_._2 > 0).map(t => f"${t._1}(${t._2 * 100}%.2f)")
+      if (bestTerms.size > 0 && bestDocs.size > 0) {
+        rowList += Row(bestDocs, bestTerms)
+        termsList ++= terms.filter(_._2 > 0.001).map(_._1)
+      }
     }
-    
-    val output = spark.createDataFrame(spark.sparkContext.parallelize(rowList.toList), getSchema())
-    
-    output.withColumn("best_words", concat(lit("["), concat_ws(",", col("terms")), lit("]")))
-      .select(col("gall_id"), col("best_words"))
+
+    val output = spark.createDataFrame(spark.sparkContext.parallelize(rowList.toList), getOutputSchema())
+
+    output
+      .withColumn("gall_rank", concat(lit("["), concat_ws(",", col("gall_ids")), lit("]")))
+      .withColumn("best_words_rank", concat(lit("["), concat_ws(",", col("best_terms")), lit("]")))
+      .select(col("gall_rank"), col("best_words_rank"))
       .coalesce(1)
       .write
       .mode("overwrite")
       .csv(OUTPUT_PATH)
 
+    val engine = new LSAQueryEngine(svd, termIds, docIds)
+    val rowList2 = termsList.map(term => Row(term, engine.getTopDocsStringForTerm(term))).toList
+    val output2 = spark.createDataFrame(spark.sparkContext.parallelize(rowList2), getOutputSchema2())
+    output2
+      .withColumn("best_galls_rank", concat(lit("["), concat_ws(",", col("best_galls")), lit("]")))
+      .select(col("term"), col("best_galls_rank"))
+      .coalesce(1)
+      .write
+      .mode("overwrite")
+      .csv(OUTPUT_PATH + "2")
+
     docTermsFreqs.unpersist()
     vecRdd.unpersist()
+  }
+}
+
+class LSAQueryEngine(
+                      val svd: SingularValueDecomposition[RowMatrix, Matrix],
+                      val termIds: Array[String],
+                      val docIds: Map[Long, String]) {
+
+  // 특정 단어 -> 문서 유사도
+  def multiplyByDiagonalRowMatrix(mat: RowMatrix, diag: MLLibVector): RowMatrix = {
+    val sArr = diag.toArray
+    new RowMatrix(mat.rows.map { vec =>
+      val vecArr = vec.toArray
+      val newArr = (0 until vec.size).toArray.map(i => vecArr(i) * sArr(i))
+      Vectors.dense(newArr)
+    })
+  }
+
+  val US: RowMatrix = multiplyByDiagonalRowMatrix(svd.U, svd.s)
+  val idTerms: Map[String, Int] = termIds.zipWithIndex.toMap
+
+  def topDocsForTerm(termId: Int): Seq[(Double, Long)] = {
+    val rowArr = (0 until svd.V.numCols).map(i => svd.V(termId, i)).toArray
+    val rowVec = Matrices.dense(rowArr.length, 1, rowArr)
+
+    // Compute scores against every doc
+    val docScores = US.multiply(rowVec)
+
+    // Find the docs with the highest scores
+    val allDocWeights = docScores.rows.map(_.toArray(0)).zipWithUniqueId
+    allDocWeights.top(10)
+  }
+  
+  def getTopDocsStringForTerm(term: String): Seq[String] = {
+    val idWeights = topDocsForTerm(idTerms(term))
+    return idWeights.filter(_._1 > 0).map(t => f"${docIds(t._2)}(${t._1}%.2f)")
   }
 }
