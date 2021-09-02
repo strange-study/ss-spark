@@ -5,13 +5,13 @@ import java.io.File
 import kr.co.shineware.nlp.komoran.constant.DEFAULT_MODEL
 import kr.co.shineware.nlp.komoran.core.Komoran
 import org.apache.spark.ml.feature.{CountVectorizer, IDF, RegexTokenizer}
-import org.apache.spark.ml.linalg.{Vector => MLVector}
+import org.apache.spark.ml.linalg.{SparseVector, Vector => MLVector}
 import org.apache.spark.mllib.linalg.distributed.RowMatrix
 import org.apache.spark.mllib.linalg.{Matrices, Matrix, SingularValueDecomposition, Vectors, Vector => MLLibVector}
-import org.apache.spark.sql.expressions.UserDefinedFunction
+import org.apache.spark.sql.expressions.{UserDefinedFunction, Window}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{ArrayType, StringType, StructField, StructType}
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 import scala.collection.JavaConverters._
 import scala.collection.Map
@@ -29,6 +29,9 @@ object ProjectApp {
   val INPUT_PATH: String = "/home/data/input"
   val OUTPUT_PATH: String = "/home/data/output"
 
+  val NUM_TERMS = 8000
+  val K = 1000 // K < N
+
   val tokenizer: RegexTokenizer = new RegexTokenizer().setInputCol("title").setOutputCol("tokens").setPattern("[ ]")
   // FIXME : LIGHT vs FULL
   val komoran = new Komoran(DEFAULT_MODEL.LIGHT)
@@ -44,73 +47,14 @@ object ProjectApp {
     }
   }
 
-  def getInputSchema() : StructType = {
-    return StructType(Seq(
-      StructField("gall_id", StringType, nullable = false),
-      StructField("terms", ArrayType(StringType), nullable = false)
-    ))
-  }
-
-  def getOutputSchema() : StructType = {
-    return StructType(Seq(
-      StructField("gall_ids", ArrayType(StringType), nullable = false),
-      StructField("best_terms", ArrayType(StringType), nullable = false)
-    ))
-  }
-
-  def getOutputSchema2() : StructType = {
-    return StructType(Seq(
-      StructField("term", StringType, nullable = false),
-      StructField("best_galls", ArrayType(StringType), nullable = false)
-    ))
-  }
-
-
   def main(args: Array[String]): Unit = {
     val spark = SparkSession.builder().appName("Project Application").getOrCreate()
 
-    var res = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], getInputSchema())
-
-    val NUM_TERMS = 3000
-    val K = 1000 // K < N
-    val outputDir = new File(INPUT_PATH)
-    val fileList: List[File] = if (outputDir.exists && outputDir.isDirectory) outputDir.listFiles.filter(_.isFile).toList else List[File]()
-
-    for (file <- fileList) {
-      try {
-        val gallId = file.getPath.split("/").last.split(".csv")(0)
-
-        val df = spark.read
-          .options(Map("header" -> "true", "inferSchema" -> "true"))
-          .csv(file.getPath)
-
-        // 1. Tokenize
-        val outputDF = tokenizer.transform(df)
-          .withColumn("nouns", getNounsUdf(col("title")))
-          .select(
-            when(size(col("nouns")) > 0, col("nouns")).otherwise(col("tokens")).as("terms")
-          )
-          .select(explode(col("terms")))
-          .agg(collect_list(col("col")).as("terms"))
-          .select(
-            lit(gallId).as("gall_id"),
-            col("terms")
-          )
-        res = res.union(outputDF)
-      }
-      catch {
-        case ex : Exception => println(ex) // Skip Error
-      }
-
-    }
+    val inputDF = readTokenizedDocs(spark)
 
     // 2. TF
-    val vocabModel = new CountVectorizer()
-      .setInputCol("terms")
-      .setOutputCol("termsFreqs")
-      .setVocabSize(NUM_TERMS)
-      .fit(res)
-    val docTermsFreqs = vocabModel.transform(res)
+    val vocabModel = new CountVectorizer().setInputCol("terms").setOutputCol("termsFreqs").setVocabSize(NUM_TERMS).fit(inputDF)
+    val docTermsFreqs = vocabModel.transform(inputDF)
     docTermsFreqs.cache()
 
     val termIds: Array[String] = vocabModel.vocabulary
@@ -128,77 +72,133 @@ object ProjectApp {
     val mat = new RowMatrix(vecRdd)
     val svd = mat.computeSVD(K, computeU=true)
 
-    // 의미 & 단어 관련성 (S*Vt) => V : local
-    def topTermsInTopConcepts(svd: SingularValueDecomposition[RowMatrix, Matrix], numConcepts: Int, numTerms: Int, termIds: Array[String]) : Seq[Seq[(String, Double)]] = {
-      val v = svd.V
-      val topTerms = new ArrayBuffer[Seq[(String, Double)]]
-      val arr = v.toArray
-
-      for (i <- 0 until numConcepts) {
-        val offs = i * v.numRows
-        val termWeights = arr.slice(offs, offs + v.numRows).zipWithIndex
-        val sorted = termWeights.sortBy(-_._1) // score desc sorting => (score, id)
-        topTerms += sorted.take(numTerms).map {
-          case (score, id) => (termIds(id), score) // => (term, score)
-        }
-      }
-      topTerms
-    }
-
-    // 문서 & 의미 관련성 (U*S) => U : distributed
-    def topDocsInTopConcepts(svd: SingularValueDecomposition[RowMatrix, Matrix], numConcepts: Int, numDocs: Int, docIds: Map[Long, String]) : Seq[Seq[(String, Double)]] = {
-      val u = svd.U
-      val topDocs = new ArrayBuffer[Seq[(String, Double)]]()
-      for (i <- 0 until numConcepts) {
-        val docWeights = u.rows.map(_.toArray(i)).zipWithUniqueId()
-        topDocs += docWeights.top(numDocs).map { // top 1 (=> desc sort) => (score, uniqueKey)
-          case (score, id) => (docIds(id), score) // (doc, score)
-        }
-      }
-      topDocs
-    }
-
-    val numConcepts = res.count().toInt
-    val topConceptTerms = topTermsInTopConcepts(svd, numConcepts, 20, termIds)
+    val numConcepts = 40 //inputDF.count().toInt
+    val topConceptTerms = topTermsInTopConcepts(svd, numConcepts, 15, termIds)
     val topConceptDocs = topDocsInTopConcepts(svd, numConcepts, 5, docIds)
 
+
+    val output = new OutputWriter(spark, OUTPUT_PATH)
+
+    // write output1 (svd)
     var rowList = ListBuffer[Row]()
     val termsList = ListBuffer[String]()
 
     for ((terms, docs) <- topConceptTerms.zip(topConceptDocs)) {
-      val bestTerms = terms.filter(_._2 > 0.001).map(t => f"${t._1}(${t._2 * 100}%.2f)")
-      val bestDocs = docs.filter(_._2 > 0).map(t => f"${t._1}(${t._2 * 100}%.2f)")
+      val bestTerms = terms.filter(_._2 >= 0.01).map(t => f"${t._1}(${t._2 * 100}%.2f)")
+      val bestDocs = docs.filter(_._2 >= 0.01).map(t => f"${t._1}(${t._2 * 100}%.2f)")
       if (bestTerms.size > 0 && bestDocs.size > 0) {
         rowList += Row(bestDocs, bestTerms)
         termsList ++= terms.filter(_._2 > 0.001).map(_._1)
       }
     }
 
-    val output = spark.createDataFrame(spark.sparkContext.parallelize(rowList.toList), getOutputSchema())
+    output.write(output.getOutputDF1(rowList.toList), 1)
 
-    output
-      .withColumn("gall_rank", concat(lit("["), concat_ws(",", col("gall_ids")), lit("]")))
-      .withColumn("best_words_rank", concat(lit("["), concat_ws(",", col("best_terms")), lit("]")))
-      .select(col("gall_rank"), col("best_words_rank"))
-      .coalesce(1)
-      .write
-      .mode("overwrite")
-      .csv(OUTPUT_PATH)
-
+    // write output2 (top docs for term)
     val engine = new LSAQueryEngine(svd, termIds, docIds)
     val rowList2 = termsList.map(term => Row(term, engine.getTopDocsStringForTerm(term))).toList
-    val output2 = spark.createDataFrame(spark.sparkContext.parallelize(rowList2), getOutputSchema2())
-    output2
-      .withColumn("best_galls_rank", concat(lit("["), concat_ws(",", col("best_galls")), lit("]")))
-      .select(col("term"), col("best_galls_rank"))
-      .coalesce(1)
-      .write
-      .mode("overwrite")
-      .csv(OUTPUT_PATH + "2")
+    output.write(output.getOutputDF2(rowList2), 2)
 
+    // write output3 (top 100 terms)
+    output.write(getTop200Terms(docTermMatrix, termIds), 3)
+
+    // uncache
     docTermsFreqs.unpersist()
     vecRdd.unpersist()
   }
+
+  def readTokenizedDocs(spark: SparkSession) : DataFrame = {
+    val inputSchema = StructType(Seq(
+      StructField("gall_id", StringType, nullable = false),
+      StructField("terms", ArrayType(StringType), nullable = false)
+    ))
+
+    var input = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], inputSchema)
+
+    val inputDir = new File(INPUT_PATH)
+    val fileList: List[File] = if (inputDir.exists && inputDir.isDirectory) inputDir.listFiles.filter(_.isDirectory).flatMap(_.listFiles).filter(_.isFile).toList else List[File]()
+
+    for (file <- fileList) {
+      try {
+        val gallId = file.getPath.replace(INPUT_PATH+"/", "").replace("/", "_").split(".csv")(0)
+
+        val df = spark.read
+          .options(Map("header" -> "true", "inferSchema" -> "true"))
+          .csv(file.getPath)
+
+        // 1. Tokenize
+        val outputDF = tokenizer.transform(df)
+          .withColumn("nouns", getNounsUdf(col("title")))
+          .select(
+            when(size(col("nouns")) > 0, col("nouns")).otherwise(col("tokens")).as("terms")
+          )
+          .select(explode(col("terms")))
+          .agg(collect_list(col("col")).as("terms"))
+          .select(
+            lit(gallId).as("gall_id"),
+            col("terms")
+          )
+        input = input.union(outputDF)
+      }
+      catch {
+        case ex : Exception => println(ex) // Skip Error
+      }
+    }
+
+    return input
+  }
+
+  // 의미 & 단어 관련성 (S*Vt) => V : local
+  def topTermsInTopConcepts(svd: SingularValueDecomposition[RowMatrix, Matrix], numConcepts: Int, numTerms: Int, termIds: Array[String]) : Seq[Seq[(String, Double)]] = {
+    val v = svd.V
+    val topTerms = new ArrayBuffer[Seq[(String, Double)]]
+    val arr = v.toArray
+
+    for (i <- 0 until numConcepts) {
+      val offs = i * v.numRows
+      val termWeights = arr.slice(offs, offs + v.numRows).zipWithIndex
+      val sorted = termWeights.sortBy(-_._1) // score desc sorting => (score, id)
+      topTerms += sorted.take(numTerms).map {
+        case (score, id) => (termIds(id), score) // => (term, score)
+      }
+    }
+    topTerms
+  }
+
+  // 문서 & 의미 관련성 (U*S) => U : distributed
+  def topDocsInTopConcepts(svd: SingularValueDecomposition[RowMatrix, Matrix], numConcepts: Int, numDocs: Int, docIds: Map[Long, String]) : Seq[Seq[(String, Double)]] = {
+    val u = svd.U
+    val topDocs = new ArrayBuffer[Seq[(String, Double)]]()
+    for (i <- 0 until numConcepts) {
+      val docWeights = u.rows.map(_.toArray(i)).zipWithUniqueId()
+      topDocs += docWeights.top(numDocs).map { // top 1 (=> desc sort) => (score, uniqueKey)
+        case (score, id) => (docIds(id), score) // (doc, score)
+      }
+    }
+    topDocs
+  }
+
+  def getTop200Terms(docTermMatrix: DataFrame, termIds: Array[String]) : DataFrame = {
+    val getTermIdVector = udf{ v: SparseVector => v.indices.zip(v.values).toMap }
+    val getTermFromIds = udf{ id: Int => termIds(id) }
+
+    val TF = docTermMatrix
+      .withColumn("termIdVec", getTermIdVector(col("tfidfVec")))
+      .select(col("gall_id"), explode(col("termIdVec")))
+      .withColumnRenamed("key", "termId").withColumnRenamed("value","freq")
+      .withColumn("term", getTermFromIds(col("termId")))
+
+    return TF
+      .orderBy(col("freq").desc)
+      .groupBy(col("term"))
+      .agg(
+        round(sum(col("freq"))).as("freq"),
+        concat_ws(",", collect_list(concat(col("gall_id"), lit("("), round(col("freq")), lit(")")))).as("galls")
+      )
+      .withColumn("rank", row_number().over(Window.orderBy(col("freq").desc)))
+      .filter(col("rank") <= 200)
+  }
+
 }
 
 class LSAQueryEngine(
@@ -230,9 +230,73 @@ class LSAQueryEngine(
     val allDocWeights = docScores.rows.map(_.toArray(0)).zipWithUniqueId
     allDocWeights.top(10)
   }
-  
+
   def getTopDocsStringForTerm(term: String): Seq[String] = {
     val idWeights = topDocsForTerm(idTerms(term))
-    return idWeights.filter(_._1 > 0).map(t => f"${docIds(t._2)}(${t._1}%.2f)")
+    return idWeights.filter(_._1 > 0.1).map(t => f"${docIds(t._2)}(${t._1}%.2f)")
   }
+}
+
+
+class OutputWriter(val spark: SparkSession, val outputPath: String) {
+  def getOutputDF1(rows: List[Row]): DataFrame = {
+    val schema = StructType(Seq(
+      StructField("best_terms", ArrayType(StringType), nullable = false),
+      StructField("gall_ids", ArrayType(StringType), nullable = false)
+    ))
+    return spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+  }
+
+  def getOutputDF2(rows: List[Row]): DataFrame = {
+    val schema = StructType(Seq(
+      StructField("term", StringType, nullable = false),
+      StructField("best_galls", ArrayType(StringType), nullable = false)
+    ))
+    return spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+  }
+
+  def write(df: DataFrame, outputNum: Int): Unit = {
+    outputNum match {
+      case 1 => writeOutput1(df)
+      case 2 => writeOutput2(df)
+      case 3 => writeOutput3(df)
+    }
+  }
+
+  private def writeOutput1(df: DataFrame): Unit =  {
+    df
+      .withColumn("gall_rank", concat(lit("["), concat_ws(",", col("gall_ids")), lit("]")))
+      .withColumn("best_words_rank", concat(lit("["), concat_ws(",", col("best_terms")), lit("]")))
+      .select(col("gall_rank"), col("best_words_rank"))
+      .coalesce(1)
+      .write
+      .mode("overwrite")
+      .csv(outputPath)
+  }
+
+  private def writeOutput2(df: DataFrame): Unit = {
+    df
+      .withColumn("best_galls_rank", concat(lit("["), concat_ws(",", col("best_galls")), lit("]")))
+      .select(col("term"), col("best_galls_rank"))
+      .coalesce(1)
+      .write
+      .mode("overwrite")
+      .csv(outputPath + "2")
+  }
+
+  private def writeOutput3(df: DataFrame): Unit = {
+    df
+      .select(
+        col("rank"),
+        col("freq"),
+        col("term"),
+        concat(lit("["), col("galls"), lit("]")).as("top_galls")
+      )
+      .coalesce(1)
+      .write
+      .mode("overwrite")
+      .csv(outputPath + "3")
+
+  }
+
 }
