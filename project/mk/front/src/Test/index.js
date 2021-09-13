@@ -18,7 +18,7 @@ const options = {
     rotations: 5,
     rotationAngles: [-45, 45],
     fontWeight: "bold",
-    fontSizes: [1, 100]
+    fontSizes: [1, 50]
 };
 
 const getData = () => d3.csv(worddata, function (row) {
