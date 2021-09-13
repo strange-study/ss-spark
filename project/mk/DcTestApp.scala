@@ -1,5 +1,5 @@
 
-import org.apache.spark.ml.feature.{CountVectorizer, IDF, RegexTokenizer, Tokenizer}
+import org.apache.spark.ml.feature.{CountVectorizer, IDF, RegexTokenizer}
 import org.apache.spark.ml.linalg.{Vector => MLVector}
 import org.apache.spark.mllib.linalg.distributed.RowMatrix
 import org.apache.spark.mllib.linalg.{Matrix, SingularValueDecomposition, Vectors}
@@ -7,6 +7,7 @@ import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 import java.util
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 object DcTestApp {
@@ -23,12 +24,13 @@ object DcTestApp {
   val TF = "TF"
   val TF_IDF = "TF-IDF"
   val BEST_WORDS = "BEST_WORDS"
-
+  val DATE = "DATE"
+  val SCORE_WORDS = "SCORE_WORDS"
   val TARGET_BOARD_ID = "bitcoins"
 
   val spark: SparkSession = SparkSession.builder.appName("sparkTest")
     .config("spark.master", "local")
-    .config("spark.driver.bindAddress", "192.168.0.16")
+    .config("spark.driver.bindAddress", "192.168.1.4")
     .getOrCreate()
 
   val boardIdsData: DataFrame = getDataFrame(INPUT_DATA_PATH + BOARD_IDS)
@@ -39,9 +41,11 @@ object DcTestApp {
 
   val NUM_VIEW = 200
 
-  val OUTPUT_FILE_NAME = "result-" +s"view-$NUM_VIEW"+s"k-$NUM_K"
+  val OUTPUT_FILE_NAME = "result-" + s"view-$NUM_VIEW" + s"k-$NUM_K"
 
   val TOKEN_PATTERN = "[ ]"
+
+  val wordScoreMap: mutable.HashMap[String, mutable.HashMap[String, Double]] = mutable.HashMap()
 
   def main(args: Array[String]) {
     executeSemanticAnalysis()
@@ -97,7 +101,7 @@ object DcTestApp {
     val topGall = topGallInTopConcept(
       svd,
       10,
-      2,
+      5,
       dcGallIds
     )
     makeOutputFile(topWords, topGall)
@@ -166,16 +170,43 @@ object DcTestApp {
   }
 
   def makeOutputFile(topWords: Seq[Seq[(String, Double)]], topGall: Seq[Seq[(String, Double)]]): Unit = {
+    calculateWordScore(topWords, topGall)
     val outRows = new util.ArrayList[Row]()
     val outSchema = new StructType()
-      .add(BEST_WORDS, StringType)
-      .add(GALL_ID, StringType)
-    for ((terms, docs) <- topWords.zip(topGall)) {
-      outRows.add(Row(terms.map(_._1).mkString(", "), docs.mkString(", ")))
-    }
+      .add(DATE, StringType)
+      .add(SCORE_WORDS, StringType)
+    wordScoreMap.foreach(dateAndScoreWords => {
+      outRows.add(Row(dateAndScoreWords._1, dateAndScoreWords._2.mkString(", ")))
+    })
     val outDf = spark.createDataFrame(outRows, outSchema)
-
     createCsvFileFromDataframe(outDf, OUTPUT_FILE_NAME)
+  }
+
+  def calculateWordScore(topWords: Seq[Seq[(String, Double)]], topGall: Seq[Seq[(String, Double)]]): Unit = {
+    var conceptWeight = topWords.zip(topGall).size + 1
+    for ((terms, docs) <- topWords.zip(topGall)) {
+      docs.foreach(docAndScore => {
+        val doc = docAndScore._1
+        val docScore = if (docAndScore._2 < 0) {
+          0
+        } else {
+          docAndScore._2 * 100
+        }
+        terms.foreach(termAndScore => {
+          val term = termAndScore._1
+          val termScore = if (termAndScore._2 < 0) {
+            0
+          } else {
+            termAndScore._2 * 100
+          }
+          wordScoreMap.getOrElseUpdate(doc, mutable.HashMap())
+
+          val resultScore = math.pow(termScore * docScore, 2) * conceptWeight // (단어 점수 * 문서 점수)의 스코어가 비슷한 경우에 좀 더 확실한 차이를 주기 위하여 2제곱 사용.
+          wordScoreMap(doc)(term) = wordScoreMap(doc).getOrElseUpdate(term, 0) + resultScore
+        })
+      })
+      conceptWeight -= 1
+    }
   }
 
   def createCsvFileFromDataframe(dataFrame: DataFrame, dirName: String): Unit = {
