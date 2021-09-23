@@ -13,7 +13,7 @@ trait SparkSessionWrapper {
     SparkSession
       .builder()
       .config(conf)
-      .master("local[2]")
+      .master("local")
       .appName("AnalyzeDC")
       .getOrCreate()
   }

@@ -19,14 +19,12 @@ import scala.collection.mutable.ArrayBuffer
 object AnalyzeDCApp extends SparkSessionWrapper {
   import spark.implicits._
 
-  val INPUT_PATH: String = "/Users/jinju/Documents/study/ss-spark/project/output/20210702"
-  val INPUT_PATH2: String = "/Users/jinju/Documents/study/ss-spark/project/output2/20210721"
-  val OUTPUT_PATH: String = "/Users/jinju/Documents/study/ss-spark/project/result/20210702"
-  val OUTPUT_PATH2: String = "/Users/jinju/Documents/study/ss-spark/project/result2/20210721"
+  val INPUT_PATH: String = "/Users/jinju/Documents/study/ss-spark/project/output/20210816"
+  val OUTPUT_PATH: String = "/Users/jinju/Documents/study/ss-spark/project/result_10000/20210816"
   val TOP20_TERMS_BY_GALS = "top20_terms_by_gal"
   val TOP10_CONCEPTS = "top10_concepts"
 
-  val tokenizer: RegexTokenizer = new RegexTokenizer().setInputCol("title").setOutputCol("tokens").setPattern("[ ]")
+  val tokenizer: RegexTokenizer = new RegexTokenizer().setInputCol("titles").setOutputCol("terms").setPattern("[ ]")
   val getMorphsUDF: UserDefinedFunction = udf[Seq[String], String] { sentence =>
     val komoran = new Komoran(DEFAULT_MODEL.LIGHT)
     val TAGS: List[String] = Array("NNG", "NNP", "VV", "VA", "MM", "IC").toList
@@ -44,7 +42,7 @@ object AnalyzeDCApp extends SparkSessionWrapper {
   }
 
   def saveDFtoCSV(df: DataFrame, path: String): Unit = {
-    df.coalesce(1).write.mode(SaveMode.Overwrite)
+    df.orderBy("docId").coalesce(1).write.mode(SaveMode.Overwrite)
       .options(Map("header" -> "true", "compression" -> "none"))
       .csv(path)
   }
@@ -79,24 +77,29 @@ object AnalyzeDCApp extends SparkSessionWrapper {
   def makeGalTitlesOverPeriodDF(path: String): DataFrame = {
     val filePaths: List[String] = getFilePaths(path)
     val rawSchema = StructType(Array(
+      StructField("gallery", StringType, false),
       StructField("date", StringType, false),
       StructField("title", StringType, true)
     ))
     var totalDF = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], rawSchema)
     for (filePath <- filePaths) {
+      System.out.println(filePath)
+
       val fileName: String = filePath.split("/").last.replace(".csv", "")
       val df = spark.read
         .options(Map("header" -> "true", "inferSchema" -> "true"))
         .csv(filePath)
-        .select("date", "title")
+        .withColumn("gallery", lit(fileName))
+        .select("gallery","date", "title")
 
       totalDF = totalDF.unionByName(df)
     }
 
-    val galTitlesDF = totalDF.groupBy("date")
+    val galTitlesDF = totalDF.groupBy("gallery", "date")
       .agg(collect_list("title").alias("title_list"))
+      .withColumn("docId", concat_ws(",", $"gallery", split($"date", " ").getItem(0)))
       .withColumn("titles", concat_ws(" ", $"title_list"))
-      .select("date", "titles")
+      .select("docId", "titles")
 
     galTitlesDF
   }
@@ -133,23 +136,28 @@ object AnalyzeDCApp extends SparkSessionWrapper {
   def makeTopNTermsByDocsDF(n: Int, docTermMetrix: DataFrame, vocaDict: Array[String])= {
     val getTermTFIDFMap = udf{v:SparseVector => v.indices.zip(v.values).toMap}
     val docTermTFIDFMap = docTermMetrix.withColumn("termIdToTFIDFs", getTermTFIDFMap($"tfidfVec"))
-      .select("gallery","termIdToTFIDFs")
+      .select("docId","termIdToTFIDFs")
 
-    var exploded = docTermTFIDFMap.select($"gallery", explode($"termIdToTFIDFs"))
+    var exploded = docTermTFIDFMap.select($"docId", explode($"termIdToTFIDFs"))
       .withColumnRenamed("key", "termId")
       .withColumnRenamed("value","freq")
 
     val getTermFromIds = udf{id:Int => vocaDict(id)}
-    val window = Window.partitionBy("gallery").orderBy($"freq".desc)
+    val window = Window.partitionBy("docId").orderBy($"freq".desc)
     exploded = exploded.withColumn("row_number", row_number.over(window))
       .filter(s"row_number <= " + n)
       .withColumn("term", getTermFromIds($"termId"))
+      .select("docId", "term", "freq")
+      .withColumn("termFreq", concat(lit("("), $"term", lit(","), $"freq", lit(")")))
 
-    val resultDF = exploded.groupBy("gallery")
-      .agg(collect_list("term").alias("term_list"))
-      .withColumn("terms", concat_ws(",",$"term_list"))
-      .select($"gallery", $"terms")
+    val resultDF = exploded.groupBy("docId")
+      .agg(collect_list("termFreq").alias("termFreq_list"))
+      .withColumn("termFreqs", concat_ws(",",$"termFreq_list"))
+      .withColumn("gallery", split($"docId", ",").getItem(0))
+      .withColumn("date", split($"docId", ",").getItem(1))
+      .select("gallery", "date", "termFreqs")
 
+    resultDF.show(10, truncate = false)
     resultDF
   }
 
@@ -227,26 +235,28 @@ object AnalyzeDCApp extends SparkSessionWrapper {
     val TOP20_TERMS_BY_GALS_PATH = output_path + "/" + TOP20_TERMS_BY_GALS
     val TOP10_CONCEPTS_PATH = output_path + "/" + TOP10_CONCEPTS
 
-    val galTitlesDF = makeGalTitlesDF(INPUT_PATH)
-    val termsDF = tokenizeDocsDF(galTitlesDF)
+    val galTitlesDF = makeGalTitlesOverPeriodDF(input_path)
+    //val termsDF = tokenizeDocsDF(galTitlesDF)
+    val termsDF = tokenizer.transform(galTitlesDF)
+
+    galTitlesDF.show()
 
     termsDF.cache()
     termsDF.show()
 
     // calculate tfidf and svd
-    val numTerms = 5000
+    val numTerms = 20000
     val (galTermFreqs, galTermMetrix, termIds, galIds) = calculateTFIDF(termsDF, numTerms)
-    val svd = calculateSVD(galTermMetrix)
-
     val top20TermsByGalsDF = makeTopNTermsByDocsDF(20, galTermMetrix, termIds)
     saveDFtoCSV(top20TermsByGalsDF, TOP20_TERMS_BY_GALS_PATH)
 
-    val topConceptDF = makeTopTermsAndDocsInTopConcepts(svd, termIds, galIds, 10, 10 ,1)
-    saveDFtoCSV(topConceptDF, TOP10_CONCEPTS_PATH)
+    /*
+    val svd = calculateSVD(galTermMetrix)
+    val topConceptDF = makeTopTermsAndDocsInTopConcepts(svd, termIds, galIds, 10, 20 ,5)
+    saveDFtoCSV(topConceptDF, TOP10_CONCEPTS_PATH)*/
   }
 
   def main(args: Array[String]): Unit = {
     startAnalyze(INPUT_PATH, OUTPUT_PATH)
-    startAnalyze(INPUT_PATH2, OUTPUT_PATH2)
   }
 }
