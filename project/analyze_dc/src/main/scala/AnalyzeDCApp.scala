@@ -21,7 +21,7 @@ object AnalyzeDCApp extends SparkSessionWrapper {
 
   val INPUT_PATH: String = "/Users/jinju/Documents/study/ss-spark/project/output/20210816"
   val OUTPUT_PATH: String = "/Users/jinju/Documents/study/ss-spark/project/result_10000/20210816"
-  val TOP20_TERMS_BY_GALS = "top20_terms_by_gal"
+  val TOP40_TERMS_BY_GALS = "top40_terms_by_gal"
   val TOP10_CONCEPTS = "top10_concepts"
 
   val tokenizer: RegexTokenizer = new RegexTokenizer().setInputCol("titles").setOutputCol("terms").setPattern("[ ]")
@@ -232,7 +232,7 @@ object AnalyzeDCApp extends SparkSessionWrapper {
   }
 
   def startAnalyze(input_path: String, output_path: String) = {
-    val TOP20_TERMS_BY_GALS_PATH = output_path + "/" + TOP20_TERMS_BY_GALS
+    val TOP40_TERMS_BY_GALS_PATH = output_path + "/" + TOP40_TERMS_BY_GALS
     val TOP10_CONCEPTS_PATH = output_path + "/" + TOP10_CONCEPTS
 
     val galTitlesDF = makeGalTitlesOverPeriodDF(input_path)
@@ -247,8 +247,8 @@ object AnalyzeDCApp extends SparkSessionWrapper {
     // calculate tfidf and svd
     val numTerms = 20000
     val (galTermFreqs, galTermMetrix, termIds, galIds) = calculateTFIDF(termsDF, numTerms)
-    val top20TermsByGalsDF = makeTopNTermsByDocsDF(20, galTermMetrix, termIds)
-    saveDFtoCSV(top20TermsByGalsDF, TOP20_TERMS_BY_GALS_PATH)
+    val top40TermsByGalsDF = makeTopNTermsByDocsDF(40, galTermMetrix, termIds)
+    saveDFtoCSV(top40TermsByGalsDF, TOP40_TERMS_BY_GALS_PATH)
 
     /*
     val svd = calculateSVD(galTermMetrix)
