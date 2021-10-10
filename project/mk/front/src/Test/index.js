@@ -21,28 +21,29 @@ const options = {
     fontSizes: [1, 50]
 };
 const scoreMap = new Map()
-let dates = []
+const dates = []
 let wordsAndScore = []
 
-const calculateScore = () => d3.csv(worddata, function (data) {
+const calculateScore = () => d3.csv(worddata).then(function (data) {
     let conceptWeight = data.length + 1
-    console.log(1)
-    for (var i = 0; i < data.length; i++) {
+
+    for (let i = 0; i < data.length; i++) {
         data[i].BEST_WORDS.split(",").forEach(function (word) {
             const wordAndScore = word.split("^")
             data[i].GALL_ID.split(",").forEach(function (id) {
                     const idAndScore = id.split("^")
                     let wordScore = wordAndScore[1];
                     let idScore = idAndScore[1]
+
                     if (wordScore < 0) {
                         wordScore = 0
                     } else {
-                        wordScore = wordScore * 100
+                        wordScore = wordScore * 2
                     }
                     if (idScore < 0) {
                         idScore = 0
                     } else {
-                        idScore = idScore * 100
+                        idScore = idScore * 2
                     }
                     if (!scoreMap.has(idAndScore[0])) {
                         const wordMap = new Map()
@@ -50,15 +51,22 @@ const calculateScore = () => d3.csv(worddata, function (data) {
                         scoreMap.set(idAndScore[0], wordMap)
                     }
                     let wordMap = scoreMap.get(idAndScore[0])
+                    if (!wordMap.has(wordAndScore[0])) {
+                        wordMap.set(wordAndScore[0], 0)
+                    }
                     wordMap.set(wordAndScore[0], wordMap.get(wordAndScore[0]) + (Math.pow(wordScore * idScore, 2) * conceptWeight))
                     scoreMap.set(idAndScore[0], wordMap)
+
                 }
             )
-            conceptWeight -= 1
-        })
 
+        })
+        conceptWeight -= 1
     }
-    dates = Array.from(scoreMap.keys());
+    let tempDates = Array.from(scoreMap.keys());
+    tempDates.forEach(function (date) {
+        dates.push(date)
+    })
     let values = Array.from(scoreMap.values());
     values.forEach(function (scoreMap) {
         let scoreMapKeys = Array.from(scoreMap.keys());
@@ -93,18 +101,30 @@ const initState = {
 const TestResult = React.memo(() => {
     // set inital state
     const [state, setState] = useState(initState)
-    calculateScore()
-    // initial loading (when rendering)
     useEffect(() => {
-        for (var i = 0; i < dates.length; i++) {
-            setState({
-                ...state,
-                dates: (dates[i].map((a) => getTitle(a))),
-                words: (wordsAndScore[i].map((a) => getWords(a)))
+        if (dates.length !== 0) {
+            if (state.words.length === 0) {
+                setState({
+                    ...state,
+                    dates: (() => getTitle(dates[state.index])),
+                    words: (() => getWords(wordsAndScore[state.index]))
+                })
+            }
+
+        } else {
+            calculateScore().then(() => {
+                if (state.words.length === 0) {
+                    setState({
+                        ...state,
+                        dates: (() => getTitle(dates[state.index])),
+                        words: (() => getWords(wordsAndScore[state.index]))
+                    })
+                    console.log(state)
+                }
             })
         }
-
     })
+
     const increaseIndex = () => {
         const nextIndex = (state.index < state.words.length - 1) ? state.index + 1 : 0
         setState({...state, index: nextIndex})
