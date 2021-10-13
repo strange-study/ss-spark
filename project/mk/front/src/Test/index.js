@@ -20,68 +20,10 @@ const options = {
     fontWeight: "bold",
     fontSizes: [1, 50]
 };
-const scoreMap = new Map()
-const dates = []
-let wordsAndScore = []
-
-const calculateScore = () => d3.csv(worddata).then(function (data) {
-    let conceptWeight = data.length + 1
-
-    for (let i = 0; i < data.length; i++) {
-        data[i].BEST_WORDS.split(",").forEach(function (word) {
-            const wordAndScore = word.split("^")
-            data[i].GALL_ID.split(",").forEach(function (id) {
-                    const idAndScore = id.split("^")
-                    let wordScore = wordAndScore[1];
-                    let idScore = idAndScore[1]
-
-                    if (wordScore < 0) {
-                        wordScore = 0
-                    } else {
-                        wordScore = wordScore * 2
-                    }
-                    if (idScore < 0) {
-                        idScore = 0
-                    } else {
-                        idScore = idScore * 2
-                    }
-                    if (!scoreMap.has(idAndScore[0])) {
-                        const wordMap = new Map()
-                        wordMap.set(wordAndScore[0], 0)
-                        scoreMap.set(idAndScore[0], wordMap)
-                    }
-                    let wordMap = scoreMap.get(idAndScore[0])
-                    if (!wordMap.has(wordAndScore[0])) {
-                        wordMap.set(wordAndScore[0], 0)
-                    }
-                    wordMap.set(wordAndScore[0], wordMap.get(wordAndScore[0]) + (Math.pow(wordScore * idScore, 2) * conceptWeight))
-                    scoreMap.set(idAndScore[0], wordMap)
-
-                }
-            )
-
-        })
-        conceptWeight -= 1
-    }
-    let tempDates = Array.from(scoreMap.keys());
-    tempDates.forEach(function (date) {
-        dates.push(date)
-    })
-    let values = Array.from(scoreMap.values());
-    values.forEach(function (scoreMap) {
-        let scoreMapKeys = Array.from(scoreMap.keys());
-        let scoreMapValues = Array.from(scoreMap.values());
-        let tempResult = []
-        for (let i = 0; i < scoreMapKeys.length; i++) {
-            tempResult.push(`${scoreMapKeys[i]} -> ${scoreMapValues[i]}`)
-        }
-        wordsAndScore.push(tempResult)
-    })
-})
 
 
 const getWords = (inputData) => {
-    return inputData.map((data) => {
+    return inputData && inputData.map((data) => {
         const splitData = data.split(' -> ')
         return {text: splitData[0], value: (splitData[1])}
     })
@@ -94,40 +36,82 @@ const getTitle = (data) => {
 // 3. main component & state
 const initState = {
     dates: [],
-    words: [],
-    index: 0
+    words: []
 }
 
 const TestResult = React.memo(() => {
     // set inital state
-    const [state, setState] = useState(initState)
+    const [index, setIndex] = useState(0);
+    const [dates, setDates] = useState([]);
+    const [wordsAndScore, setWordsAndScore] = useState([]);
+
     useEffect(() => {
-        if (dates.length !== 0) {
-            if (state.words.length === 0) {
-                setState({
-                    ...state,
-                    dates: (() => getTitle(dates[state.index])),
-                    words: (() => getWords(wordsAndScore[state.index]))
+        d3.csv(worddata).then(function (data) {
+            const scoreMap = new Map()
+            const dates = [];
+            let wordsAndScore = [];
+
+            let conceptWeight = data.length + 1
+            for (let i = 0; i < data.length; i++) {
+                data[i].BEST_WORDS.match(/\((.+?),(.+?)\)/g).forEach(function (word) {
+                    const wordAndScore = word.replace(/\(|\)/gi, '').split(",")
+                    data[i].GALL_ID.match(/\((.+?),(.+?)\)/g).forEach(function (id) {
+                            const idAndScore = id.replace(/\(|\)/gi, '').split(",")
+                            let wordScore = wordAndScore[1];
+                            let idScore = idAndScore[1]
+
+                            if (wordScore < 0) {
+                                wordScore = 0
+                            } else {
+                                wordScore = wordScore * 2
+                            }
+                            if (idScore < 0) {
+                                idScore = 0
+                            } else {
+                                idScore = idScore * 2
+                            }
+                            if (!scoreMap.has(idAndScore[0])) {
+                                const wordMap = new Map()
+                                wordMap.set(wordAndScore[0], 0)
+                                scoreMap.set(idAndScore[0], wordMap)
+                            }
+                            let wordMap = scoreMap.get(idAndScore[0])
+                            if (!wordMap.has(wordAndScore[0])) {
+                                wordMap.set(wordAndScore[0], 0)
+                            }
+                            wordMap.set(wordAndScore[0], wordMap.get(wordAndScore[0]) + (Math.pow(wordScore * idScore, 2) * conceptWeight))
+                            scoreMap.set(idAndScore[0], wordMap)
+
+                        }
+                    )
+
                 })
+                conceptWeight -= 1
             }
 
-        } else {
-            calculateScore().then(() => {
-                if (state.words.length === 0) {
-                    setState({
-                        ...state,
-                        dates: (() => getTitle(dates[state.index])),
-                        words: (() => getWords(wordsAndScore[state.index]))
-                    })
-                    console.log(state)
-                }
+            let tempDates = Array.from(scoreMap.keys());
+            tempDates.forEach(function (date) {
+                dates.push(date)
             })
-        }
-    })
+            let values = Array.from(scoreMap.values());
+            values.forEach(function (scoreMap) {
+                let scoreMapKeys = Array.from(scoreMap.keys());
+                let scoreMapValues = Array.from(scoreMap.values());
+                let tempResult = []
+                for (let i = 0; i < scoreMapKeys.length; i++) {
+                    tempResult.push(`${scoreMapKeys[i]} -> ${scoreMapValues[i]}`)
+                }
+                wordsAndScore.push(tempResult)
+            })
+
+            setDates(dates);
+            setWordsAndScore(wordsAndScore);
+        })
+    }, []);
 
     const increaseIndex = () => {
-        const nextIndex = (state.index < state.words.length - 1) ? state.index + 1 : 0
-        setState({...state, index: nextIndex})
+        const nextIndex = (index < wordsAndScore.length - 1) ? index + 1 : 0 ;
+        setIndex(nextIndex);
     }
 
     // Layout
@@ -136,9 +120,9 @@ const TestResult = React.memo(() => {
     return <Fragment>
         show next? <button onClick={increaseIndex}> click </button>
         <hr/>
-        <h3>No. {state.index}</h3>
-        <ul>{state.dates[state.index]}</ul>
-        <ReactWordcloud words={state.words[state.index]}
+        <h3>No. {index}</h3>
+        <ul>{getTitle(dates[index])}</ul>
+        <ReactWordcloud words={getWords(wordsAndScore[index])}
                         callbacks={callbacks}
                         options={options}
                         size={size}
