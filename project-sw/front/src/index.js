@@ -1,16 +1,29 @@
-import React from 'react';
+import * as React from 'react';
 import ReactDOM from 'react-dom';
 import './index.css';
 import reportWebVitals from './reportWebVitals';
 
+import CssBaseline from '@material-ui/core/CssBaseline';
+import { ThemeProvider } from '@material-ui/core/styles';
+import theme from './theme';
 import TestResult from './Test';
+import Dashboard from './Dashboard';
+
+// ReactDOM.render(
+//   <React.StrictMode>
+//     <h1>HELLO WORD CLOUD</h1>
+//     <TestResult />
+//   </React.StrictMode>,
+//   document.getElementById('root')
+// );
 
 ReactDOM.render(
-  <React.StrictMode>
-    <h1>HELLO WORD CLOUD</h1>
-    <TestResult />
-  </React.StrictMode>,
-  document.getElementById('root')
+  <ThemeProvider theme={theme}>
+    {/* CssBaseline kickstart an elegant, consistent, and simple baseline to build upon. */}
+    <CssBaseline />
+    <Dashboard />
+  </ThemeProvider>,
+  document.querySelector('#root'),
 );
 
 // If you want to start measuring performance in your app, pass a function
