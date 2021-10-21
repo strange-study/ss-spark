@@ -6,16 +6,18 @@ import org.apache.spark.mllib.linalg.{Matrix, SingularValueDecomposition, Vector
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
+import java.text.SimpleDateFormat
 import java.util
+import java.util.Calendar
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 object DcTestApp {
-  val INPUT_DATA_PATH = "data/input/"
-  val OUTPUT_DATA_PATH = "data/output/"
+  private val dateFormat = new SimpleDateFormat("yyyyMMdd")
 
-  val BOARD_IDS = "board_ids.csv"
-  val TARGET_DATE = "20210702/"
+  val INPUT_DATA_PATH = "../ss-spark/project/data/" //수정 필요
+  val OUTPUT_DATA_PATH = "../ss-spark/project/output/mk/"
+
   val FILE_TYPE = ".csv"
 
   val GALL_ID = "GALL_ID"
@@ -30,10 +32,10 @@ object DcTestApp {
 
   val spark: SparkSession = SparkSession.builder.appName("sparkTest")
     .config("spark.master", "local")
-    .config("spark.driver.bindAddress", "192.168.1.4")
+    .config("spark.driver.bindAddress", "127.0.0.1")
     .getOrCreate()
 
-  val boardIdsData: DataFrame = getDataFrame(INPUT_DATA_PATH + BOARD_IDS)
+  val DATE_ANALYZED = 10
 
   val NUM_TILE_WORDS = 96214
 
@@ -41,17 +43,22 @@ object DcTestApp {
 
   val NUM_VIEW = 200
 
-  val OUTPUT_FILE_NAME = "result-" + s"view-$NUM_VIEW" + s"k-$NUM_K"
-
   val TOKEN_PATTERN = "[ ]"
 
   val wordScoreMap: mutable.HashMap[String, mutable.HashMap[String, Double]] = mutable.HashMap()
 
+  private var outputDay: String = ""
+
   def main(args: Array[String]) {
+    initTargetTime()
     executeSemanticAnalysis()
-    getDataFrame(OUTPUT_DATA_PATH + OUTPUT_FILE_NAME).show()
+    getDataFrame(OUTPUT_DATA_PATH + outputDay).show()
   }
 
+  def initTargetTime(): Unit = {
+    val now = Calendar.getInstance()
+    outputDay = dateFormat.format(now.getTime)
+  }
 
   def executeSemanticAnalysis(): Unit = {
 
@@ -112,23 +119,20 @@ object DcTestApp {
       .add(GALL_ID, StringType)
       .add(REDUCE_TITLE, StringType)
     val rows = new util.ArrayList[Row]()
-    val dateRow = getDataFrame(INPUT_DATA_PATH + TARGET_BOARD_ID + FILE_TYPE)
-      .select("date")
-      .collect()
-      .map(row => row.mkString.substring(0, 10))
-      .distinct
-    dateRow.foreach(date => {
-      val df = getDataFrame(INPUT_DATA_PATH + TARGET_BOARD_ID + FILE_TYPE)
+    for (i <- 1 to DATE_ANALYZED) {
+      val currentDay = Calendar.getInstance()
+      currentDay.add(Calendar.DATE, -i)
+      val targetDay = dateFormat.format(currentDay.getTime)
+      val df = getDataFrame(INPUT_DATA_PATH + targetDay + "/" + TARGET_BOARD_ID + FILE_TYPE)
       val contentsRow = df
         .select("title")
-        .where(df.col("date").contains(date) and (df.col("view") > NUM_VIEW))
+        .where((df.col("view") > NUM_VIEW))
         .collect()
         .map(row => row.mkString)
         .mkString(" ")
 
-      rows.add(Row(TARGET_BOARD_ID + " " + date, contentsRow))
+      rows.add(Row(TARGET_BOARD_ID + " " + targetDay, contentsRow))
     }
-    )
     spark.createDataFrame(rows, inputSchema)
   }
 
@@ -170,43 +174,15 @@ object DcTestApp {
   }
 
   def makeOutputFile(topWords: Seq[Seq[(String, Double)]], topGall: Seq[Seq[(String, Double)]]): Unit = {
-    calculateWordScore(topWords, topGall)
     val outRows = new util.ArrayList[Row]()
     val outSchema = new StructType()
-      .add(DATE, StringType)
-      .add(SCORE_WORDS, StringType)
-    wordScoreMap.foreach(dateAndScoreWords => {
-      outRows.add(Row(dateAndScoreWords._1, dateAndScoreWords._2.mkString(", ")))
-    })
-    val outDf = spark.createDataFrame(outRows, outSchema)
-    createCsvFileFromDataframe(outDf, OUTPUT_FILE_NAME)
-  }
-
-  def calculateWordScore(topWords: Seq[Seq[(String, Double)]], topGall: Seq[Seq[(String, Double)]]): Unit = {
-    var conceptWeight = topWords.zip(topGall).size + 1
+      .add(BEST_WORDS, StringType)
+      .add(GALL_ID, StringType)
     for ((terms, docs) <- topWords.zip(topGall)) {
-      docs.foreach(docAndScore => {
-        val doc = docAndScore._1
-        val docScore = if (docAndScore._2 < 0) {
-          0
-        } else {
-          docAndScore._2 * 100
-        }
-        terms.foreach(termAndScore => {
-          val term = termAndScore._1
-          val termScore = if (termAndScore._2 < 0) {
-            0
-          } else {
-            termAndScore._2 * 100
-          }
-          wordScoreMap.getOrElseUpdate(doc, mutable.HashMap())
-
-          val resultScore = math.pow(termScore * docScore, 2) * conceptWeight // (단어 점수 * 문서 점수)의 스코어가 비슷한 경우에 좀 더 확실한 차이를 주기 위하여 2제곱 사용.
-          wordScoreMap(doc)(term) = wordScoreMap(doc).getOrElseUpdate(term, 0) + resultScore
-        })
-      })
-      conceptWeight -= 1
+      outRows.add(Row(terms.map(word => "(" + word._1 + "," + word._2.toString + ")").mkString(","), docs.map(id => "(" + id._1 + "," + id._2 + ")").mkString(",")))
     }
+    val outDf = spark.createDataFrame(outRows, outSchema)
+    createCsvFileFromDataframe(outDf, outputDay)
   }
 
   def createCsvFileFromDataframe(dataFrame: DataFrame, dirName: String): Unit = {
