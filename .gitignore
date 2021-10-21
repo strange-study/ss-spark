@@ -1,3 +1,7 @@
+# IntelliJ
+.idea
+project/jj/analyze_dc/.idea
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -143,3 +147,6 @@ cython_debug/
 
 # .DS_Store
 .DS_Store
+
+# Spark
+project/jj/analyze_dc/log
