@@ -37,7 +37,6 @@ const options = {
 };
 
 const GallDialog = ({ onClose, data, open }) => {
-    console.log(data)
   
     return (
       <Dialog onClose={onClose} open={open}>

@@ -11,12 +11,10 @@ import { ResponsivePie } from '@nivo/pie'
 const getRedirectUrl = (id) => "https://gall.dcinside.com/board/lists?id=" + id
 
 export const MyResponsivePie = (props) => {
-    console.log("pie", props.data)
     if (!props.data || !props.data.children) {
         return <div/>
     }
 
-    console.log("pie", props.data.children)
     return <ResponsivePie
         data={props.data.children}
         id="name"
@@ -134,7 +132,6 @@ export const MyResponsivePie = (props) => {
         ]}
         onClick={d => window.open(getRedirectUrl(d.id))}
         tooltip={({ id, value, color }) => {
-            console.log(id, value, color)
             return <strong style={{ color }}> move to {id} ? </strong>}
         }
         tooltip={({ datum: { id, value, color } }) => (

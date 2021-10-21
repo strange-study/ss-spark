@@ -5,48 +5,7 @@ import { ResponsiveCirclePacking } from '@nivo/circle-packing'
 import React, { Fragment, useState, useEffect} from 'react';
 import { MyResponsivePie } from '../NivoPie';
 import CloudResult from '../WordGall';
-import { loadData } from './convertToNivoData';
-
-// make sure parent container have a defined height when using
-// responsive component, otherwise height will be 0 and
-// no chart will be rendered.
-// website examples showcase many properties,
-// you'll often use just a few of them.
-
-// import data from '../resources/nivo-test.json';
-
-const parseNameResultWord = (word) => {
-    // var value = word.replace(/\[|\]/gi, '').match(/(.+?)\((.+?)\)/g)
-    var value = word.replace(/\[|\]/gi, '').match(/(.+?)\_(.+?)\((.+?)\)/g)
-    return { text: RegExp.$2, value: RegExp.$3 }
-}
-const parseWordResultWord = (word) => {
-    var value = word.replace(/\[|\]/gi, '').match(/(.+?)\((.+?)\)/g)
-    return { text: RegExp.$1, value: RegExp.$2 }
-}
-
-const getGallaries = (data, prefix) => {
-    // return data.map((d) => {
-    //     const word = parseResultWord(d)
-    //     return <li> {word.text + "(" + word.value + ")"} </li>
-    // })
-    return data.map((d) => {
-        const word = parseNameResultWord(d)
-        return { id: prefix + "_" + word.text, value: (40-prefix)  * word.value, name: word.text, weight: word.value }
-    })
-}
-
-const getNivoData =  (data) => {
-    // return { galleries: (d.map((a) => getTitle(a.galls))), words: (d.map((a) => getWords(a.words))) }
-    const group = (data.map((a, index) => { return { galls : getGallaries(a.galls, index), words: getWords(a.words)}}))
-    return group.map((concept, index) => { return { id: index, children: concept.galls } })
-}
-
-const getWords = (data) => {
-    return data.map((d) => {
-        return parseWordResultWord(d)
-    })
-}
+import * as nivo from './convertToNivoData';
 
 const idRegex = new RegExp("([0-9]+)\_(.*)");
 
@@ -57,32 +16,30 @@ const getOnlyId = (id) => {
 // const MyResponsiveCirclePacking = ({ data /* see data tab */ }) => (
 const MyResponsiveCirclePacking = React.memo(() => {
     const [zoomedId, setZoomedId] = useState(null)
-    const [data, setData] = useState({id: "20210818", children: []})
+    // TODO: 날짜 삽입
+    const [data, setData] = useState({id: "20211022", children: []})
     const [words, setWords] = useState([])
     const [node, setNode] = useState(null)
 
     // const idRegex = new RegExp("([0-9]+)\_(.*)");
 
-    useEffect(() => loadData().then((d) => {
-        setData({id: data.id, children: getNivoData(d) })
-        setWords((d.map((a) => getWords(a.words))))
+    useEffect(() => nivo.loadData(data.id).then((d) => {
+        setData({id: data.id, children: nivo.getNivoData(d) })
+        setWords((d.map((a) => nivo.getWords(a.words))))
     }), [])
 
     const getWord = (index) => {
         if (!isNaN(Number(index)) && index < words.length) {
-            console.log(words[index])
             return words[index]
         }
         return null
     }
     const getNode = (index) => {
-        if (!isNaN(Number(index)) && index < data.children.length) {
-            return data.children[index]
+        if (!isNaN(Number(index)) && index <= data.children.length) {
+            return data.children[index-1]
         }
         return null
     }
-
-    console.log(words)
 
     return <Fragment>
         <div style={{height:600}}>

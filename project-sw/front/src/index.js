@@ -6,16 +6,7 @@ import reportWebVitals from './reportWebVitals';
 import CssBaseline from '@material-ui/core/CssBaseline';
 import { ThemeProvider } from '@material-ui/core/styles';
 import theme from './theme';
-import TestResult from './Test';
 import Dashboard from './Dashboard';
-
-// ReactDOM.render(
-//   <React.StrictMode>
-//     <h1>HELLO WORD CLOUD</h1>
-//     <TestResult />
-//   </React.StrictMode>,
-//   document.getElementById('root')
-// );
 
 ReactDOM.render(
   <ThemeProvider theme={theme}>

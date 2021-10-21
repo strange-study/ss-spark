@@ -12,15 +12,14 @@ import Divider from '@material-ui/core/Divider';
 import Container from '@material-ui/core/Container';
 import Link from '@material-ui/core/Link';
 import { mainListItems, secondaryListItems } from './listItems';
-import TestResult from './Test';
 import MyResponsiveCirclePacking from './Nivo';
 
 function Copyright(props) {
   return (
-    <Typography variant="body2" color="secondary" align="center" {...props}>
+    <Typography variant="body2" color="primary" align="center" {...props}>
       {'Copyright © '}
       <Link color="inherit" href="https://mui.com/">
-        Your Website
+        ss-spark
       </Link>{' '}
       {new Date().getFullYear()}
       {'.'}
@@ -103,40 +102,6 @@ function DashboardContent() {
           <Toolbar />
           <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
             <MyResponsiveCirclePacking/>
-            {/*
-            <Grid container spacing={3}> 
-              <Grid item xs={12} md={6} lg={6}>
-                <Paper
-                  sx={{
-                    p: 2,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    height: 240,
-                  }}
-                >
-                  <TestResult/>
-                </Paper>
-              </Grid>
-
-              <Grid item xs={12} md={6} lg={6}>
-                <Paper
-                  sx={{
-                    p: 2,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    height: 240,
-                  }}
-                >
-                test
-                </Paper>
-              </Grid>
-              {/* <Grid item xs={12}>
-                <Paper sx={{ p: 2, display: 'flex', flexDirection: 'column' }}>
-                test2
-                </Paper>
-              </Grid>
-            </Grid>
-            */}
             <Copyright sx={{ pt: 4 }} />
           </Container>
         </Box>
