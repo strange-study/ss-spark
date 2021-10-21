@@ -49,7 +49,7 @@ const GallDialog = ({ onClose, data, open }) => {
                   <ExitToAppIcon />
                 </Avatar>
               </ListItemAvatar>
-              <ListItemText primary={`${d.id} (${d.value}%)`} />
+              <ListItemText primary={`${d.id} (${d.value})`} />
             </ListItem>
           ))}
         </List>
