@@ -1,26 +1,29 @@
-import java.io.File
-import java.util
+package analyze_dc_jj
 
 import kr.co.shineware.nlp.komoran.constant.DEFAULT_MODEL
 import kr.co.shineware.nlp.komoran.core.Komoran
-import org.apache.spark.ml.feature.{CountVectorizer, CountVectorizerModel, IDF, RegexTokenizer}
-import org.apache.spark.ml.linalg.{SparseVector, Vector => MLVector}
+import org.apache.spark.ml.feature.{CountVectorizer, IDF, RegexTokenizer}
+import org.apache.spark.ml.linalg.SparseVector
 import org.apache.spark.mllib.linalg.distributed.RowMatrix
-import org.apache.spark.mllib.linalg.{Matrix, SingularValueDecomposition, Vectors, Vector => MLLibVector}
-import org.apache.spark.sql.{DataFrame, Row, SaveMode}
-import org.apache.spark.sql.functions._
+import org.apache.spark.mllib.linalg.{Matrix, SingularValueDecomposition, Vectors}
+import org.apache.spark.ml.linalg.{Vector => MLVector}
 import org.apache.spark.sql.expressions.{UserDefinedFunction, Window}
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
+import org.apache.spark.sql.{DataFrame, Row, SaveMode}
 
-import scala.collection.JavaConverters._
+import java.io.File
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util
+import scala.collection.JavaConverters.{asScalaBufferConverter, seqAsJavaListConverter}
 import scala.collection.mutable.ArrayBuffer
 
-
 object AnalyzeDCApp extends SparkSessionWrapper {
-  import spark.implicits._
 
-  val INPUT_PATH: String = "/Users/jinju/Documents/study/ss-spark/project/output/20210816"
-  val OUTPUT_PATH: String = "/Users/jinju/Documents/study/ss-spark/project/result_10000/20210816"
+  val ROOT_PATH: String = "."
+  val INPUT_PATH: String = ROOT_PATH + "/data"
+  val OUTPUT_PATH: String = ROOT_PATH + "/front/output/jj"
   val TOP40_TERMS_BY_GALS = "top40_terms_by_gal"
   val TOP10_CONCEPTS = "top10_concepts"
 
@@ -32,12 +35,32 @@ object AnalyzeDCApp extends SparkSessionWrapper {
     komoran.analyze(sentence).getMorphesByTags(TAGS.asJava).asScala
   }
 
-  def getFilePaths(dir_path: String): List[String] = {
-    val dir = new File(dir_path)
+  def getFilePaths(dirPath: String): List[String] = {
+    val dir = new File(dirPath)
     if (dir.exists && dir.isDirectory) {
       dir.listFiles.filter(_.isFile).map(file => file.getPath()).toList
-    } else{
-      List[String] ()
+    } else {
+      List[String]()
+    }
+  }
+
+  def getFilePathsOverPeriod(dirPath: String, startDate: String, endDate: String): List[String] = {
+    val dir = new File(dirPath)
+    if (dir.exists && dir.isDirectory) {
+      val dateDirPaths = dir.listFiles.filter(_.isDirectory).map(file => file.getPath()).toList
+      var galleryFilePaths = List[String]()
+      for (dateDirPath <- dateDirPaths) {
+        val dateDir = new File(dateDirPath)
+        val date = dateDirPath.split("/").last
+        if (startDate <= date && date <= endDate && dateDir.exists && dateDir.isDirectory) {
+          System.out.println(date, dateDirPath)
+          galleryFilePaths = galleryFilePaths ::: dateDir.listFiles.filter(_.isFile).map(file => file.getPath()).toList
+        }
+      }
+
+      galleryFilePaths
+    } else {
+      List[String]()
     }
   }
 
@@ -68,19 +91,20 @@ object AnalyzeDCApp extends SparkSessionWrapper {
 
     val galTitlesDF = totalDF.groupBy("gallery")
       .agg(collect_list("title").alias("title_list"))
-      .withColumn("titles", concat_ws(" ", $"title_list"))
+      .withColumn("titles", concat_ws(" ", col("title_list")))
       .select("gallery", "titles")
 
     galTitlesDF
   }
 
-  def makeGalTitlesOverPeriodDF(path: String): DataFrame = {
-    val filePaths: List[String] = getFilePaths(path)
+  def makeGalTitlesOverPeriodDF(path: String, startDate: String, endDate: String): DataFrame = {
+    val filePaths: List[String] = getFilePathsOverPeriod(path, startDate, endDate)
     val rawSchema = StructType(Array(
       StructField("gallery", StringType, false),
       StructField("date", StringType, false),
       StructField("title", StringType, true)
     ))
+
     var totalDF = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], rawSchema)
     for (filePath <- filePaths) {
       System.out.println(filePath)
@@ -90,15 +114,15 @@ object AnalyzeDCApp extends SparkSessionWrapper {
         .options(Map("header" -> "true", "inferSchema" -> "true"))
         .csv(filePath)
         .withColumn("gallery", lit(fileName))
-        .select("gallery","date", "title")
+        .select("gallery", "date", "title")
 
       totalDF = totalDF.unionByName(df)
     }
 
     val galTitlesDF = totalDF.groupBy("gallery", "date")
       .agg(collect_list("title").alias("title_list"))
-      .withColumn("docId", concat_ws(",", $"gallery", split($"date", " ").getItem(0)))
-      .withColumn("titles", concat_ws(" ", $"title_list"))
+      .withColumn("docId", concat_ws(",", col("gallery"), split(col("date"), " ").getItem(0)))
+      .withColumn("titles", concat_ws(" ", col("title_list")))
       .select("docId", "titles")
 
     galTitlesDF
@@ -106,8 +130,8 @@ object AnalyzeDCApp extends SparkSessionWrapper {
 
   def tokenizeDocsDF(docsDF: DataFrame): DataFrame = {
     val termsDF = docsDF
-      .withColumn("terms", getMorphsUDF($"titles"))
-      .where(size($"terms") > 0)
+      .withColumn("terms", getMorphsUDF(col("titles")))
+      .where(size(col("terms")) > 0)
 
     termsDF
   }
@@ -133,35 +157,35 @@ object AnalyzeDCApp extends SparkSessionWrapper {
     (docTermFreqs, docTermMetrix, termIds, docIds)
   }
 
-  def makeTopNTermsByDocsDF(n: Int, docTermMetrix: DataFrame, vocaDict: Array[String])= {
-    val getTermTFIDFMap = udf{v:SparseVector => v.indices.zip(v.values).toMap}
-    val docTermTFIDFMap = docTermMetrix.withColumn("termIdToTFIDFs", getTermTFIDFMap($"tfidfVec"))
-      .select("docId","termIdToTFIDFs")
+  def makeTopNTermsByDocsDF(n: Int, docTermMetrix: DataFrame, vocaDict: Array[String]) = {
+    val getTermTFIDFMap = udf { v: SparseVector => v.indices.zip(v.values).toMap }
+    val docTermTFIDFMap = docTermMetrix.withColumn("termIdToTFIDFs", getTermTFIDFMap(col("tfidfVec")))
+      .select("docId", "termIdToTFIDFs")
 
-    var exploded = docTermTFIDFMap.select($"docId", explode($"termIdToTFIDFs"))
+    var exploded = docTermTFIDFMap.select(col("docId"), explode(col("termIdToTFIDFs")))
       .withColumnRenamed("key", "termId")
-      .withColumnRenamed("value","freq")
+      .withColumnRenamed("value", "freq")
 
-    val getTermFromIds = udf{id:Int => vocaDict(id)}
-    val window = Window.partitionBy("docId").orderBy($"freq".desc)
+    val getTermFromIds = udf { id: Int => vocaDict(id) }
+    val window = Window.partitionBy("docId").orderBy(col("freq").desc)
     exploded = exploded.withColumn("row_number", row_number.over(window))
       .filter(s"row_number <= " + n)
-      .withColumn("term", getTermFromIds($"termId"))
+      .withColumn("term", getTermFromIds(col("termId")))
       .select("docId", "term", "freq")
-      .withColumn("termFreq", concat(lit("("), $"term", lit(","), $"freq", lit(")")))
+      .withColumn("termFreq", concat(lit("("), col("term"), lit(","), col("freq"), lit(")")))
 
     val resultDF = exploded.groupBy("docId")
       .agg(collect_list("termFreq").alias("termFreq_list"))
-      .withColumn("termFreqs", concat_ws(",",$"termFreq_list"))
-      .withColumn("gallery", split($"docId", ",").getItem(0))
-      .withColumn("date", split($"docId", ",").getItem(1))
+      .withColumn("termFreqs", concat_ws(",", col("termFreq_list")))
+      .withColumn("gallery", split(col("docId"), ",").getItem(0))
+      .withColumn("date", split(col("docId"), ",").getItem(1))
       .select("gallery", "date", "termFreqs")
 
     resultDF.show(10, truncate = false)
     resultDF
   }
 
-  def calculateSVD(docTermMetrix:DataFrame): SingularValueDecomposition[RowMatrix, Matrix] = {
+  def calculateSVD(docTermMetrix: DataFrame): SingularValueDecomposition[RowMatrix, Matrix] = {
     val vecRdd = docTermMetrix.select("tfidfVec").rdd.map { row =>
       Vectors.fromML(row.getAs[MLVector]("tfidfVec"))
     }
@@ -169,7 +193,7 @@ object AnalyzeDCApp extends SparkSessionWrapper {
 
     val mat = new RowMatrix(vecRdd)
     val k = 1000
-    val svd = mat.computeSVD(k, computeU=true)
+    val svd = mat.computeSVD(k, computeU = true)
 
     svd
   }
@@ -192,9 +216,9 @@ object AnalyzeDCApp extends SparkSessionWrapper {
     topTerms
   }
 
-  def topDocsInTopConcepts (
-                             svd: SingularValueDecomposition[RowMatrix, Matrix],
-                             numConcepts: Int, numDocs: Int, docIds: Map[Long, String])
+  def topDocsInTopConcepts(
+                            svd: SingularValueDecomposition[RowMatrix, Matrix],
+                            numConcepts: Int, numDocs: Int, docIds: Map[Long, String])
   : Seq[Seq[(String, Double)]] = {
     val u = svd.U
     val topDocs = new ArrayBuffer[Seq[(String, Double)]]
@@ -208,7 +232,7 @@ object AnalyzeDCApp extends SparkSessionWrapper {
   }
 
   def makeTopTermsAndDocsInTopConcepts(svd: SingularValueDecomposition[RowMatrix, Matrix], termIds: Array[String], docIds: Map[Long, String],
-                                 numConcepts: Int, numTerms: Int, numDocs: Int) = {
+                                       numConcepts: Int, numTerms: Int, numDocs: Int) = {
     val topConceptTerms = topTermsInTopConcepts(svd, numConcepts, numTerms, termIds)
     val topConceptDocs = topDocsInTopConcepts(svd, numConcepts, numDocs, docIds)
     for ((terms, docs) <- topConceptTerms.zip(topConceptDocs)) {
@@ -226,16 +250,16 @@ object AnalyzeDCApp extends SparkSessionWrapper {
       resultRows.add(Row(docs.map(_._1).mkString(", "), terms.map(_._1).mkString(", ")))
     }
     val topConceptDF = spark.createDataFrame(resultRows, resultSchema)
-    topConceptDF.show(truncate=false)
+    topConceptDF.show(truncate = false)
 
     topConceptDF
   }
 
-  def startAnalyze(input_path: String, output_path: String) = {
-    val TOP40_TERMS_BY_GALS_PATH = output_path + "/" + TOP40_TERMS_BY_GALS
-    val TOP10_CONCEPTS_PATH = output_path + "/" + TOP10_CONCEPTS
+  def startAnalyze(startDate: String, endDate: String, inputPath: String, outputPath: String) = {
+    val TOP40_TERMS_BY_GALS_PATH = outputPath + "/" + endDate + "/" + TOP40_TERMS_BY_GALS
+    val TOP10_CONCEPTS_PATH = outputPath + "/" + endDate + "/" + TOP10_CONCEPTS
 
-    val galTitlesDF = makeGalTitlesOverPeriodDF(input_path)
+    val galTitlesDF = makeGalTitlesOverPeriodDF(inputPath, startDate, endDate)
     //val termsDF = tokenizeDocsDF(galTitlesDF)
     val termsDF = tokenizer.transform(galTitlesDF)
 
@@ -250,13 +274,17 @@ object AnalyzeDCApp extends SparkSessionWrapper {
     val top40TermsByGalsDF = makeTopNTermsByDocsDF(40, galTermMetrix, termIds)
     saveDFtoCSV(top40TermsByGalsDF, TOP40_TERMS_BY_GALS_PATH)
 
-    /*
-    val svd = calculateSVD(galTermMetrix)
-    val topConceptDF = makeTopTermsAndDocsInTopConcepts(svd, termIds, galIds, 10, 20 ,5)
-    saveDFtoCSV(topConceptDF, TOP10_CONCEPTS_PATH)*/
+    // val svd = calculateSVD(galTermMetrix)
+    // val topConceptDF = makeTopTermsAndDocsInTopConcepts(svd, termIds, galIds, 10, 20 ,5)
+    // saveDFtoCSV(topConceptDF, TOP10_CONCEPTS_PATH)
   }
 
   def main(args: Array[String]): Unit = {
-    startAnalyze(INPUT_PATH, OUTPUT_PATH)
+    val formatter = DateTimeFormatter.ofPattern("yyyyMMdd")
+    val endDate = args(0)
+    val startDate = LocalDate.parse(endDate, formatter).minusDays(7L).format(formatter)
+
+    System.out.println(args(0), startDate, endDate)
+    startAnalyze(startDate, endDate, INPUT_PATH, OUTPUT_PATH)
   }
 }
