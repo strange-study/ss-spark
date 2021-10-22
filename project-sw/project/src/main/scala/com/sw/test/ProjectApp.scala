@@ -1,9 +1,9 @@
 package com.sw.test
 
 import java.io.File
-
 import kr.co.shineware.nlp.komoran.constant.DEFAULT_MODEL
 import kr.co.shineware.nlp.komoran.core.Komoran
+import org.apache.commons.io.FileUtils
 import org.apache.spark.ml.feature.{CountVectorizer, IDF, RegexTokenizer}
 import org.apache.spark.ml.linalg.{SparseVector, Vector => MLVector}
 import org.apache.spark.mllib.linalg.distributed.RowMatrix
@@ -13,11 +13,12 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{ArrayType, StringType, StructField, StructType}
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import scala.collection.JavaConverters._
 import scala.collection.Map
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import scala.util.{Success, Try}
-
 
 
 /**
@@ -25,9 +26,8 @@ import scala.util.{Success, Try}
  */
 
 object ProjectApp {
-
-  val INPUT_PATH: String = "/home/data/input"
-  val OUTPUT_PATH: String = "/home/data/output"
+  val INPUT_PATH: String = "/home/ubuntu/ss-spark/project/data"
+  val OUTPUT_PATH: String = "/home/ubuntu/ss-spark/project/output/minsw"
 
   val NUM_TERMS = 8000
   val K = 1000 // K < N
@@ -49,8 +49,11 @@ object ProjectApp {
 
   def main(args: Array[String]): Unit = {
     val spark = SparkSession.builder().appName("Project Application").getOrCreate()
+    val ymd = LocalDate.now.format(DateTimeFormatter.BASIC_ISO_DATE) // TODO: Timezone check
+    val inputPath = String.format("%s/%s", INPUT_PATH, ymd)
+    val outputPath = String.format("%s/%s", OUTPUT_PATH, ymd)
 
-    val inputDF = readTokenizedDocs(spark)
+    val inputDF = readTokenizedDocs(spark, inputPath)
 
     // 2. TF
     val vocabModel = new CountVectorizer().setInputCol("terms").setOutputCol("termsFreqs").setVocabSize(NUM_TERMS).fit(inputDF)
@@ -72,20 +75,20 @@ object ProjectApp {
     val mat = new RowMatrix(vecRdd)
     val svd = mat.computeSVD(K, computeU=true)
 
-    val numConcepts = 40 //inputDF.count().toInt
+    val numConcepts = inputDF.count().toInt.min(40)
     val topConceptTerms = topTermsInTopConcepts(svd, numConcepts, 15, termIds)
     val topConceptDocs = topDocsInTopConcepts(svd, numConcepts, 5, docIds)
 
-
-    val output = new OutputWriter(spark, OUTPUT_PATH)
+    val output = new OutputWriter(spark, outputPath)
+    output.init()
 
     // write output1 (svd)
     var rowList = ListBuffer[Row]()
     val termsList = ListBuffer[String]()
 
     for ((terms, docs) <- topConceptTerms.zip(topConceptDocs)) {
-      val bestTerms = terms.filter(_._2 >= 0.01).map(t => f"${t._1}(${t._2 * 100}%.2f)")
-      val bestDocs = docs.filter(_._2 >= 0.01).map(t => f"${t._1}(${t._2 * 100}%.2f)")
+      val bestTerms = terms.filter(_._2 >= 0.01).map(t => f"(${t._1},${t._2 * 100}%.2f)")
+      val bestDocs = docs.filter(_._2 >= 0.01).map(t => f"(${t._1},${t._2 * 100}%.2f)")
       if (bestTerms.size > 0 && bestDocs.size > 0) {
         rowList += Row(bestDocs, bestTerms)
         termsList ++= terms.filter(_._2 > 0.001).map(_._1)
@@ -102,25 +105,26 @@ object ProjectApp {
     // write output3 (top 100 terms)
     output.write(getTop200Terms(docTermMatrix, termIds), 3)
 
+    output.mergeOutput()
     // uncache
     docTermsFreqs.unpersist()
     vecRdd.unpersist()
   }
 
-  def readTokenizedDocs(spark: SparkSession) : DataFrame = {
+  def readTokenizedDocs(spark: SparkSession, inputPath: String) : DataFrame = {
     val inputSchema = StructType(Seq(
       StructField("gall_id", StringType, nullable = false),
       StructField("terms", ArrayType(StringType), nullable = false)
     ))
 
     var input = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], inputSchema)
+    val inputDir = new File(inputPath)
 
-    val inputDir = new File(INPUT_PATH)
-    val fileList: List[File] = if (inputDir.exists && inputDir.isDirectory) inputDir.listFiles.filter(_.isDirectory).flatMap(_.listFiles).filter(_.isFile).toList else List[File]()
+    val fileList: List[File] = if (inputDir.exists && inputDir.isDirectory) inputDir.listFiles.filter(_.isFile).toList else List[File]()
 
     for (file <- fileList) {
       try {
-        val gallId = file.getPath.replace(INPUT_PATH+"/", "").replace("/", "_").split(".csv")(0)
+        val gallId = file.getPath.split("/").last.split(".csv")(0)
 
         val df = spark.read
           .options(Map("header" -> "true", "inferSchema" -> "true"))
@@ -233,16 +237,28 @@ class LSAQueryEngine(
 
   def getTopDocsStringForTerm(term: String): Seq[String] = {
     val idWeights = topDocsForTerm(idTerms(term))
-    return idWeights.filter(_._1 > 0.1).map(t => f"${docIds(t._2)}(${t._1}%.2f)")
+    return idWeights.filter(_._1 > 0.1).map(t => f"(${docIds(t._2)},${t._1}%.2f)")
   }
 }
 
 
 class OutputWriter(val spark: SparkSession, val outputPath: String) {
+  val TEMP_NAME = "temp"
+  val RESULT_NAME = "result"
+
+  def init(): Unit = {
+    val dir = new File(outputPath)
+    val tmpDir = new File(String.format("%s/%s", outputPath, TEMP_NAME))
+    if (!dir.exists)
+      dir.mkdir
+    if (!tmpDir.exists)
+      tmpDir.mkdir()
+  }
+
   def getOutputDF1(rows: List[Row]): DataFrame = {
     val schema = StructType(Seq(
-      StructField("best_terms", ArrayType(StringType), nullable = false),
-      StructField("gall_ids", ArrayType(StringType), nullable = false)
+      StructField("gall_ids", ArrayType(StringType), nullable = false),
+      StructField("best_terms", ArrayType(StringType), nullable = false)
     ))
     return spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
   }
@@ -256,6 +272,7 @@ class OutputWriter(val spark: SparkSession, val outputPath: String) {
   }
 
   def write(df: DataFrame, outputNum: Int): Unit = {
+
     outputNum match {
       case 1 => writeOutput1(df)
       case 2 => writeOutput2(df)
@@ -263,25 +280,39 @@ class OutputWriter(val spark: SparkSession, val outputPath: String) {
     }
   }
 
+  def mergeOutput(): Unit = {
+    val outputDir = new File(outputPath)
+    val dirList: List[File] = if (outputDir.exists && outputDir.isDirectory) outputDir.listFiles.filter(_.isDirectory).toList else List[File]()
+    for (file <- dirList.flatMap(_.listFiles).filter(_.isDirectory).flatMap(_.listFiles).filter(_.isFile).filter(_.getPath.endsWith(".csv"))) {
+      val number = file.getPath.split(getTempOutputPath(0)).last.split("/")(0)
+      FileUtils.copyFile(file, new File(getRealOutputPath(number)))
+    }
+    for (dir <- dirList) {
+      FileUtils.deleteDirectory(dir)
+    }
+  }
+
   private def writeOutput1(df: DataFrame): Unit =  {
     df
-      .withColumn("gall_rank", concat(lit("["), concat_ws(",", col("gall_ids")), lit("]")))
-      .withColumn("best_words_rank", concat(lit("["), concat_ws(",", col("best_terms")), lit("]")))
-      .select(col("gall_rank"), col("best_words_rank"))
+      .withColumn("gall_rank", concat_ws(",", col("gall_ids")))
+      .withColumn("best_words_rank", concat_ws(",", col("best_terms")))
+      .select(col("gall_rank").as("galls"), col("best_words_rank").as("words"))
       .coalesce(1)
       .write
+      .option("header", "true")
       .mode("overwrite")
-      .csv(outputPath)
+      .csv(getTempOutputPath(1))
   }
 
   private def writeOutput2(df: DataFrame): Unit = {
     df
-      .withColumn("best_galls_rank", concat(lit("["), concat_ws(",", col("best_galls")), lit("]")))
-      .select(col("term"), col("best_galls_rank"))
+      .withColumn("best_galls_rank", concat(concat_ws(",", col("best_galls"))))
+      .select(col("term").as("word"), col("best_galls_rank").as("galls"))
       .coalesce(1)
       .write
+      .option("header", "true")
       .mode("overwrite")
-      .csv(outputPath + "2")
+      .csv(getTempOutputPath(2))
   }
 
   private def writeOutput3(df: DataFrame): Unit = {
@@ -290,13 +321,20 @@ class OutputWriter(val spark: SparkSession, val outputPath: String) {
         col("rank"),
         col("freq"),
         col("term"),
-        concat(lit("["), col("galls"), lit("]")).as("top_galls")
+        col("galls").as("top_galls")
       )
       .coalesce(1)
       .write
+      .option("header", "true")
       .mode("overwrite")
-      .csv(outputPath + "3")
+      .csv(getTempOutputPath(3))
+  }
 
+  private def getTempOutputPath(num: Integer): String = {
+    return if (num > 0) String.format("%s/%s/%d", outputPath, TEMP_NAME, num) else String.format("%s/%s/", outputPath, TEMP_NAME)
+  }
+  private def getRealOutputPath(name: String): String = {
+    return String.format("%s/%s%s.csv", outputPath, RESULT_NAME, name)
   }
 
 }
