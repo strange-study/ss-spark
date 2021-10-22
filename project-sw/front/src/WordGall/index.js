@@ -3,8 +3,7 @@ import ReactWordcloud from 'react-wordcloud';
 import * as d3 from 'd3';
 
 // source data
-// import worddata from '../resources/sample.csv';
-import worddata from '../resources/o1.csv';
+import worddata from '../output/minsw/20211022/1.csv';
 
 // css for react-wordcloud
 import 'tippy.js/dist/tippy.css';

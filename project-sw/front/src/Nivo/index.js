@@ -29,8 +29,8 @@ const MyResponsiveCirclePacking = React.memo(() => {
     }), [])
 
     const getWord = (index) => {
-        if (!isNaN(Number(index)) && index < words.length) {
-            return words[index]
+        if (!isNaN(Number(index)) && index <= words.length) {
+            return words[index-1]
         }
         return null
     }
