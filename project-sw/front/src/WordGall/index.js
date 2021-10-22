@@ -2,9 +2,6 @@ import React, { useState, useEffect, Fragment } from 'react';
 import ReactWordcloud from 'react-wordcloud';
 import * as d3 from 'd3';
 
-// source data
-import worddata from '../output/minsw/20211022/1.csv';
-
 // css for react-wordcloud
 import 'tippy.js/dist/tippy.css';
 import 'tippy.js/animations/scale.css';

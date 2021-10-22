@@ -1,5 +1,5 @@
 // TODO: 날짜에 따른 리소스 load
-import data from '../output/minsw/20211022/1.csv';
+import data from '../output/minsw/20211022/result1.csv';
 import * as d3 from 'd3';
 
 
