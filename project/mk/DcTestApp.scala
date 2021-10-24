@@ -15,8 +15,8 @@ import scala.collection.mutable.ArrayBuffer
 object DcTestApp {
   private val dateFormat = new SimpleDateFormat("yyyyMMdd")
 
-  val INPUT_DATA_PATH = "../ss-spark/project/data/" //수정 필요
-  val OUTPUT_DATA_PATH = "../ss-spark/project/output/mk/"
+  val INPUT_DATA_PATH =  "/home/ubuntu/ss-spark/project/data"
+  val OUTPUT_DATA_PATH = "/home/ubuntu/ss-spark/project/output/mk"
 
   val FILE_TYPE = ".csv"
 
