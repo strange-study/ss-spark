@@ -1,5 +1,4 @@
-// TODO: 날짜에 따른 리소스 load
-import data from '../output/minsw/20211022/result2.csv'
+import data from '../resources/minsw_2.csv';
 import * as d3 from 'd3';
 
 const parseResultWord = (word) => {
