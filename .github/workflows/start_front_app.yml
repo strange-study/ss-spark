@@ -1,0 +1,18 @@
+name: start_front_app.yml
+on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: true
+        default: 'warning'
+      tags:
+        description: 'Test tags'
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - name: Run front app.
+        run: |
+          nohup bash -c 'npx serve -s /home/ubuntu/ss-spark/project/build' > /home/ubuntu/ss-spark/project/logs/ss-app.log 2>&1 &
