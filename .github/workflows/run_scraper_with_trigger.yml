@@ -1,0 +1,23 @@
+name: run_scraper_with_trigger
+on:
+  schedule:
+    - cron: "10 19 * * *"
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: true
+        default: 'warning'
+      tags:
+        description: 'Test tags'
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - name: Get dc_board ids.
+        run: |
+          python3 /home/ubuntu/ss-spark/project/scripts/dc_board_id_scraper.py
+      - name: Get titles of dc_boards.
+        run: |
+          python3 /home/ubuntu/ss-spark/project/scripts/dc_scraper.py
