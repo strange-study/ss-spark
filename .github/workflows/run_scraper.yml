@@ -9,7 +9,7 @@ jobs:
     steps:
       - name: Get dc_board ids.
         run: |
-          python3 /home/ubuntu/ss-spark/project/src/dc_board_id_scraper.py
+          python3 /home/ubuntu/ss-spark/project/scripts/dc_board_id_scraper.py
       - name: Get titles of dc_boards.
         run: |
-          python3 /home/ubuntu/ss-spark/project/src/dc_scraper.py
+          python3 /home/ubuntu/ss-spark/project/scripts/dc_scraper.py
