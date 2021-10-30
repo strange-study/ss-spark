@@ -1,0 +1,21 @@
+name: execute_spark_apps.yml
+on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: true
+        default: 'warning'
+      tags:
+        description: 'Test tags'
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - name: Run spark app.
+        run: |
+          nohup bash -c 'sh /home/ubuntu/ss-spark/project/scripts/start_to_spark_app.sh jj' > /home/ubuntu/ss-spark/project/logs/jj.log 2>&1
+      - name: Move Result.
+        run: |
+          python3 /home/ubuntu/ss-spark/project/scripts/copy_result_file_executor.py
