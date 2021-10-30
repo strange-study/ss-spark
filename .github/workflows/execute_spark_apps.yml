@@ -1,7 +1,5 @@
 name: execute_spark_apps.yml
 on:
-  schedule:
-    - cron: "10 1 * * *"
   workflow_dispatch:
     inputs:
       logLevel:
