@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import ReactWordcloud from 'react-wordcloud';
 import { Container, Row, Col, Dropdown, DropdownButton } from 'react-bootstrap';
 import * as d3 from 'd3';
-import data from '../resources/jj_1.csv';
 
 import 'tippy.js/dist/tippy.css';
 import 'tippy.js/animations/scale.css';
@@ -66,17 +65,16 @@ const callbacks = {
 const DcWordCloud = () => {
   const [galleries, setGalleries] = useState([]);
   const [selectedGallery, setSelectedGallery] = useState('');
-  const [words, setWords] = useState(initWords);
 
   useEffect(() => {
-    d3.csv(data).then((rows) => {
+    d3.csv(`${process.env.PUBLIC_URL}/resources/jj_1.csv`).then((rows) => {
       const galleries = {};
       const _names = new Set();
 
       rows.reduce((result, row) => {
         _names.add(row.gallery);
         galleries[row.gallery]=galleries[row.gallery] ? {...galleries[row.gallery]} : {};
-        galleries[row.gallery][row.date] = row.termFreqs.match(/\((.+?),(.+?)\)/g).map((value) => {
+        galleries[row.gallery][row.date] = row.termFreqs?.match(/\((.+?),(.+?)\)/g)?.map((value) => {
           value = value.replace(/\(|\)/gi, '')
           const term = value.split(",")[0]
           const freq = Number(value.split(",")[1])

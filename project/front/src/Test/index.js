@@ -2,9 +2,6 @@ import React, {Fragment, useEffect, useState} from 'react';
 import ReactWordcloud from 'react-wordcloud';
 import * as d3 from 'd3';
 
-import worddata from '../resources/mk_1.csv';
-//import worddata from '../output/mk/20211024.csv';
-
 
 import 'tippy.js/dist/tippy.css';
 import 'tippy.js/animations/scale.css';
@@ -27,7 +24,7 @@ const options = {
     fontSizes: [1, 50]
 };
 
-const getData = () => d3.csv(worddata, function (row) {
+const getData = () => d3.csv(`${process.env.PUBLIC_URL}/resources/mk_1.csv`, function (row) {
     return {DATE: row.DATE, SCORE_WORDS: row.SCORE_WORDS.split(",")}
 })
 

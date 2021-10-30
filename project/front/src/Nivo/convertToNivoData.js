@@ -1,5 +1,4 @@
 // TODO: 날짜에 따른 리소스 load
-import data from '../resources/minsw_1.csv';
 import * as d3 from 'd3';
 
 
@@ -11,7 +10,7 @@ const parseResultWord = (word) => {
 }
 
 const loadData = (id) => {
-    return d3.csv(data, function(row) { 
+    return d3.csv(`${process.env.PUBLIC_URL}/resources/minsw_1.csv`, function(row) { 
         return { words: row.words.match(/\((.+?),(.+?)\)/g), galls: row.galls.match(/\((.+?),(.+?)\)/g) }
     })
 }

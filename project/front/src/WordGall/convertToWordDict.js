@@ -1,4 +1,3 @@
-import data from '../resources/minsw_2.csv';
 import * as d3 from 'd3';
 
 const parseResultWord = (word) => {
@@ -8,7 +7,7 @@ const parseResultWord = (word) => {
     return { id: value.split(",")[0], value: Number(value.split(",")[1]) };
 }
 
-const loadData = () => d3.csv(data, function(row) { 
+const loadData = () => d3.csv(`${process.env.PUBLIC_URL}/resources/minsw_1.csv`, function(row) { 
     return { word: row.word, galls: row.galls.match(/\((.+?),(.+?)\)/g) }
 })
 
