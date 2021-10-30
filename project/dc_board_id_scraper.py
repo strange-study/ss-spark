@@ -1,11 +1,12 @@
 import os
 from datetime import datetime
+from pytz import timezone
 
 import requests
 from bs4 import BeautifulSoup
 
 BASE_URL = 'https://m.dcinside.com/category/hotgall'
-OUTPUT_DIR = "output"
+OUTPUT_DIR = "/home/ubuntu/ss-spark/project/data"
 FILE_NAME = "board_ids"
 FILE_TYPE = "csv"
 
@@ -26,9 +27,10 @@ def write_board_ids(out_stream):
 
 def main():
     start_time = datetime.now()
+    today = datetime.now(timezone('Asia/Seoul')).strftime("%Y%m%d")
     if not os.path.exists(f"{OUTPUT_DIR}"):
         os.makedirs(f"{OUTPUT_DIR}")
-    output_path = f"{OUTPUT_DIR}/{FILE_NAME}.{FILE_TYPE}"
+    output_path = f"{OUTPUT_DIR}/{FILE_NAME}_{today}.{FILE_TYPE}"
     o = open(output_path, "w")
     print(f"Save to '{output_path}'")
     write_board_ids(o)

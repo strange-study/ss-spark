@@ -9,12 +9,13 @@ from pytz import timezone
 from time import sleep
 
 START_DT = datetime.combine(datetime.now(timezone('Asia/Seoul')).date() - timedelta(days=1), time(6))
+TODAY_STR = datetime.now(timezone('Asia/Seoul')).strftime("%Y%m%d")
 
 URL = 'https://gall.dcinside.com/board/lists/'
 HEADERS = {'User-Agent': 'testt'}
 MAX_INT = sys.maxsize
-OUTPUT_DIR = "output"
-INPUT_DIR = "output/board_ids.csv"
+OUTPUT_DIR = "/home/ubuntu/ss-spark/project/data"
+INPUT_DIR = f"/home/ubuntu/ss-spark/project/data/board_ids_{TODAY_STR}.csv"
 
 class Post:
     columns = ["c_id", "title", "view", "recommend", "comment_num", "date"]
@@ -117,80 +118,6 @@ def get_pages(board_id, output):
     print("SCRAPED PAGES : 1 ~ {}\n".format(params['page']))
 
 
-def get_pages_after_some_dt(board_id, some_dt, output):
-    is_after_some_dt, prev_id = True, MAX_INT
-    params = {'id': board_id, 'page': 0}
-    retry = 3
-
-    while is_after_some_dt and retry > 0 :
-        params['page'] += 1
-        response = requests.get(URL, params=params, headers=HEADERS)
-        print("scraping... page - {}".format(params['page']))
-
-        if response.status_code != 200:
-            print("[ERROR] RESPONSE CODE : {}".format(response.status_code))
-            return
-        try:
-            contents = get_contents_from_html(response)
-
-            for content in contents:
-                num = content.find('td', class_='gall_num').text
-                date_tag = content.find('td', class_='gall_date')
-
-                if "운영자" in content.find('td', class_='gall_writer').text :
-                    continue
-                elif not num.isdigit() or int(num) >= prev_id:
-                    continue
-                elif not date_tag.has_attr('title') :
-                    continue
-
-                c_id = int(num)
-                date = datetime.strptime(date_tag.attrs['title'], '%Y-%m-%d %H:%M:%S')
-
-                if date < some_dt:
-                    is_after_some_dt = False
-                    break
-
-                try:
-                    post = get_post(content, c_id, date)
-                    # File Write
-                    output.write(post.to_csv_row() + "\n")
-                    prev_id = c_id
-
-                except Exception as e:
-                    print("skip exception : ", e)
-                    print(content)
-        except Exception as e:
-            print("--------------------------")
-            if retry :
-                print("[ERROR] SKIP '{}' GALLARY".format(board_id))
-                return
-            else :
-                print("[WARNING] FAILED '{}' GALLARY ({})".format(board_id, params['page']))
-                print("[WARNING] SLEEP 10S AND RETRY (REMAIN RETRY COUNT : {}".foramt(retry))
-                sleep(10)
-                params['page'] -= 1
-                retry -= 1
-
-    print("--------------------------")
-    print("SCRAPED PAGES : 1 ~ {}\n".format(params['page']))
-
-def gall_after_some_dt(some_dt_str, gall_names):
-    s_time = datetime.now()
-    some_dt = datetime.strptime(some_dt_str, "%Y%m%d")
-
-    for gall_name in gall_names:
-        if not os.path.exists(f"{OUTPUT_DIR}/{some_dt_str}"):
-            os.makedirs(f"{OUTPUT_DIR}/{some_dt_str}")
-        output_dir_path = f"{OUTPUT_DIR}/{some_dt_str}/{gall_name}.csv"
-        o = open(output_dir_path, "w")
-        print(f"Save to '{output_dir_path}'")
-
-        o.write(Post().get_header()+"\n")
-        get_pages_after_some_dt(gall_name, some_dt, o)
-        o.close()
-    print("[END] TOTAL TIME : ", datetime.now() - s_time) 
-
 def single(gall_name):
     start_time = datetime.now()
     today = start_time.strftime("%Y%m%d")
@@ -230,19 +157,7 @@ def print_warning_empty_borad_ids_file():
 
 if __name__ == "__main__":
     if len(sys.argv) >= 2 :
-        try:
-            some_dt = datetime.strptime(sys.argv[1], "%Y%m%d")
-
-            inputList = []
-            i = open(INPUT_DIR, "r")
-            for itr in i:
-                inputList.append(itr.replace('\n', ''))
-            main(inputList)
-            i.close()
-            gall_after_some_dt(some_dt, )
-        except ValueError as e:
-            print(e)
-            single(sys.argv[1])
+        single(sys.argv[1])
     elif not os.path.exists(f"{INPUT_DIR}"):
         print_warning_empty_borad_ids_file()
     else:
