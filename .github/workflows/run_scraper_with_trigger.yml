@@ -1,5 +1,7 @@
 name: run_scraper_with_trigger
 on:
+  schedule:
+    - cron: "32 * * * *"
   workflow_dispatch:
     inputs:
       logLevel:
