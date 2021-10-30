@@ -1,7 +1,7 @@
 name: run_scraper
 on:
   schedule:
-    - cron: "10 19 * * *"
+    - cron: "34 19 * * *"
 
 jobs:
   build:
