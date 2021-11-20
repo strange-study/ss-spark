@@ -1,5 +1,7 @@
 name: execute_spark_apps.yml
 on:
+  schedule:
+    - cron: "10 21 * * *"
   workflow_dispatch:
     inputs:
       logLevel:
@@ -16,3 +18,12 @@ jobs:
       - name: Run spark app of jj.
         run: |
           sh /home/ubuntu/ss-spark/project/scripts/start_to_spark_app.sh jj
+      - name: Run spark app of mk.
+        run: |
+          sh /home/ubuntu/ss-spark/project/scripts/start_to_spark_app.sh mk
+      - name: Run spark app of sw.
+        run: |
+          sh /home/ubuntu/ss-spark/project/scripts/start_to_spark_app.sh sw
+      - name: Move Result.
+        run: |
+          python3 /home/ubuntu/ss-spark/project/scripts/copy_result_file_executor.py
