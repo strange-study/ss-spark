@@ -2,10 +2,14 @@ import React, {Fragment, useEffect, useState} from 'react';
 import ReactWordcloud from 'react-wordcloud';
 import * as d3 from 'd3';
 
-import worddata from '../resources/bitcoin_result.csv';
+import worddata from '../output/mk/20211024.csv';
 
 import 'tippy.js/dist/tippy.css';
 import 'tippy.js/animations/scale.css';
+
+
+let date = new Date()
+let currentDate = `${date.year}${date.month >= 10 ? date.month : '0' + date.month}${date.date >= 10 ? date.date : '0' + date.date}`
 
 
 const size = [1200, 800];
