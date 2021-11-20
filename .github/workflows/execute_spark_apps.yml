@@ -13,9 +13,15 @@ jobs:
   build:
     runs-on: self-hosted
     steps:
-      - name: Run spark app.
+      - name: Run spark app of jj.
         run: |
-          nohup bash -c 'sh /home/ubuntu/ss-spark/project/scripts/start_to_spark_app.sh jj' > /home/ubuntu/ss-spark/project/logs/jj.log 2>&1
+          nohup bash -c 'sh /home/ubuntu/ss-spark/project/scripts/start_to_spark_app.sh jj' > /dev/null 2>&1 
+      - name: Run spark app of mk.
+        run: |
+          nohup bash -c 'sh /home/ubuntu/ss-spark/project/scripts/start_to_spark_app.sh mk' > /dev/null 2>&1
+      - name: Run spark app of sw.
+        run: |
+          nohup bash -c 'sh /home/ubuntu/ss-spark/project/scripts/start_to_spark_app.sh sw' > /dev/null 2>&1
       - name: Move Result.
         run: |
           python3 /home/ubuntu/ss-spark/project/scripts/copy_result_file_executor.py
