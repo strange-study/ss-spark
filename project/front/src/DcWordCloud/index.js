@@ -8,26 +8,6 @@ import 'tippy.js/animations/scale.css';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './DcWordCloud.css'
 
-const initWords = [
-  {
-    text: 'told',
-    value: 64,
-  },
-  {
-    text: 'mistake',
-    value: 11,
-  },
-  {
-    text: 'thought',
-    value: 16,
-  },
-  {
-    text: 'bad',
-    value: 17,
-  },
-]
-
-
 const getColorCode = function(word) {
   let hash = 0, i, chr;
   if (word.length === 0) return hash;
@@ -99,7 +79,7 @@ const DcWordCloud = () => {
     <GallerySelector galleries={galleries} setSelectedGallery={setSelectedGallery}/>
     <Container>
       <Row>
-        {useMemo(() => drawWordCloud(), [selectedGallery])}
+        {drawWordCloud()}
       </Row>
     </Container>
   </> ); 
